@@ -1,0 +1,506 @@
+{
+  "{T}": {
+    "file": "T.svg",
+    "english": "tap this permanent",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{Q}": {
+    "file": "Q.svg",
+    "english": "untap this permanent",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{E}": {
+    "file": "E.svg",
+    "english": "an energy counter",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{P}": {
+    "file": "P.svg",
+    "english": "modal budget pawprint",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{PW}": {
+    "file": "PW.svg",
+    "english": "planeswalker",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{CHAOS}": {
+    "file": "CHAOS.svg",
+    "english": "chaos",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{A}": {
+    "file": "A.svg",
+    "english": "an acorn counter",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{TK}": {
+    "file": "TK.svg",
+    "english": "a ticket counter",
+    "represents_mana": false,
+    "appears_in_mana_costs": false
+  },
+  "{X}": {
+    "file": "X.svg",
+    "english": "X generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{Y}": {
+    "file": "Y.svg",
+    "english": "Y generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{Z}": {
+    "file": "Z.svg",
+    "english": "Z generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{0}": {
+    "file": "0.svg",
+    "english": "zero mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{½}": {
+    "file": "HALF.svg",
+    "english": "one-half generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{1}": {
+    "file": "1.svg",
+    "english": "one generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2}": {
+    "file": "2.svg",
+    "english": "two generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{3}": {
+    "file": "3.svg",
+    "english": "three generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{4}": {
+    "file": "4.svg",
+    "english": "four generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{5}": {
+    "file": "5.svg",
+    "english": "five generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{6}": {
+    "file": "6.svg",
+    "english": "six generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{7}": {
+    "file": "7.svg",
+    "english": "seven generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{8}": {
+    "file": "8.svg",
+    "english": "eight generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{9}": {
+    "file": "9.svg",
+    "english": "nine generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{10}": {
+    "file": "10.svg",
+    "english": "ten generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{11}": {
+    "file": "11.svg",
+    "english": "eleven generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{12}": {
+    "file": "12.svg",
+    "english": "twelve generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{13}": {
+    "file": "13.svg",
+    "english": "thirteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{14}": {
+    "file": "14.svg",
+    "english": "fourteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{15}": {
+    "file": "15.svg",
+    "english": "fifteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{16}": {
+    "file": "16.svg",
+    "english": "sixteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{17}": {
+    "file": "17.svg",
+    "english": "seventeen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{18}": {
+    "file": "18.svg",
+    "english": "eighteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{19}": {
+    "file": "19.svg",
+    "english": "nineteen generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{20}": {
+    "file": "20.svg",
+    "english": "twenty generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{100}": {
+    "file": "100.svg",
+    "english": "one hundred generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{1000000}": {
+    "file": "1000000.svg",
+    "english": "one million generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{∞}": {
+    "file": "INFINITY.svg",
+    "english": "infinite generic mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{W/U}": {
+    "file": "WU.svg",
+    "english": "one white or blue mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{W/B}": {
+    "file": "WB.svg",
+    "english": "one white or black mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{B/R}": {
+    "file": "BR.svg",
+    "english": "one black or red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{B/G}": {
+    "file": "BG.svg",
+    "english": "one black or green mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{U/B}": {
+    "file": "UB.svg",
+    "english": "one blue or black mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{U/R}": {
+    "file": "UR.svg",
+    "english": "one blue or red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{R/G}": {
+    "file": "RG.svg",
+    "english": "one red or green mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{R/W}": {
+    "file": "RW.svg",
+    "english": "one red or white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{G/W}": {
+    "file": "GW.svg",
+    "english": "one green or white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{G/U}": {
+    "file": "GU.svg",
+    "english": "one green or blue mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{B/G/P}": {
+    "file": "BGP.svg",
+    "english": "one black mana, one green mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{B/R/P}": {
+    "file": "BRP.svg",
+    "english": "one black mana, one red mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{G/U/P}": {
+    "file": "GUP.svg",
+    "english": "one green mana, one blue mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{G/W/P}": {
+    "file": "GWP.svg",
+    "english": "one green mana, one white mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{R/G/P}": {
+    "file": "RGP.svg",
+    "english": "one red mana, one green mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{R/W/P}": {
+    "file": "RWP.svg",
+    "english": "one red mana, one white mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{U/B/P}": {
+    "file": "UBP.svg",
+    "english": "one blue mana, one black mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{U/R/P}": {
+    "file": "URP.svg",
+    "english": "one blue mana, one red mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{W/B/P}": {
+    "file": "WBP.svg",
+    "english": "one white mana, one black mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{W/U/P}": {
+    "file": "WUP.svg",
+    "english": "one white mana, one blue mana, or 2 life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{C/W}": {
+    "file": "CW.svg",
+    "english": "one colorless mana or one white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C/U}": {
+    "file": "CU.svg",
+    "english": "one colorless mana or one blue mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C/B}": {
+    "file": "CB.svg",
+    "english": "one colorless mana or one black mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C/R}": {
+    "file": "CR.svg",
+    "english": "one colorless mana or one red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C/G}": {
+    "file": "CG.svg",
+    "english": "one colorless mana or one green mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2/W}": {
+    "file": "2W.svg",
+    "english": "two generic mana or one white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2/U}": {
+    "file": "2U.svg",
+    "english": "two generic mana or one blue mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2/B}": {
+    "file": "2B.svg",
+    "english": "two generic mana or one black mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2/R}": {
+    "file": "2R.svg",
+    "english": "two generic mana or one red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{2/G}": {
+    "file": "2G.svg",
+    "english": "two generic mana or one green mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{H}": {
+    "file": "H.svg",
+    "english": "one colored mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{W/P}": {
+    "file": "WP.svg",
+    "english": "one white mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{U/P}": {
+    "file": "UP.svg",
+    "english": "one blue mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{B/P}": {
+    "file": "BP.svg",
+    "english": "one black mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{R/P}": {
+    "file": "RP.svg",
+    "english": "one red mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{G/P}": {
+    "file": "GP.svg",
+    "english": "one green mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C/P}": {
+    "file": "CP.svg",
+    "english": "one colorless mana or two life",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{HW}": {
+    "file": "HW.svg",
+    "english": "one-half white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{HR}": {
+    "file": "HR.svg",
+    "english": "one-half red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": false
+  },
+  "{W}": {
+    "file": "W.svg",
+    "english": "one white mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{U}": {
+    "file": "U.svg",
+    "english": "one blue mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{B}": {
+    "file": "B.svg",
+    "english": "one black mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{R}": {
+    "file": "R.svg",
+    "english": "one red mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{G}": {
+    "file": "G.svg",
+    "english": "one green mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{C}": {
+    "file": "C.svg",
+    "english": "one colorless mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{S}": {
+    "file": "S.svg",
+    "english": "one snow mana",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{L}": {
+    "file": "L.svg",
+    "english": "one mana from a legendary source",
+    "represents_mana": true,
+    "appears_in_mana_costs": true
+  },
+  "{D}": {
+    "file": "D.svg",
+    "english": "one potential land drop",
+    "represents_mana": false,
+    "appears_in_mana_costs": true
+  }
+}

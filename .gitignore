@@ -1,0 +1,10 @@
+.env
+*.sqlite3
+__pycache__/
+.venv/
+node_modules/
+.next/
+out/
+spike-out/
+generated/
+.DS_Store
