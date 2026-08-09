@@ -36,11 +36,16 @@ def _palette(color_identity):
     )
 
 
-def art_only(face, style=None):
+def art_only(face, style=None, reference=True):
     """The Art Only brief for one face (`cards.scryfall.faces()` produces the face).
 
     `style` is the user's chosen look, passed through verbatim. Omitted, the model is left
     to pick a treatment that suits the card.
+
+    `reference` says whether the caller is attaching the official art. It is the caller's
+    call and not the face's, because `scryfall.art_reference()` withholds the attachment on
+    a crossover-only card — and a brief that describes an attachment that is not there sends
+    the model looking for an image it cannot see.
     """
     lines = [
         "You are a senior Magic: The Gathering card artist.",
@@ -55,15 +60,21 @@ def art_only(face, style=None):
         lines.append(f"Flavour text: {face['flavor_text']}")
     lines += ["", _palette(face.get("color_identity") or [])]
 
-    if face.get("art_crop"):
+    if reference:
         lines += [
             "",
-            "The attached image is the card's official artwork. Keep the subject, the "
-            "action and the setting recognisably the same card — reinterpret it, do not "
-            "replace it.",
+            "The attached image is the card's official artwork. Take from it ONLY what is "
+            "depicted — who or what is in it, and what they are doing. Take nothing of how "
+            "it is drawn: not its palette, not its lighting, not its period, not its level "
+            "of realism, not its setting. Where the reference and the art style disagree, "
+            "the art style wins.",
         ]
     if style:
-        lines += ["", f"Art style: {style}"]
+        lines += [
+            "",
+            f"Art style: {style}. This governs the whole picture — the world it is set in, "
+            "the light, the palette and the finish.",
+        ]
 
     lines += [
         "",

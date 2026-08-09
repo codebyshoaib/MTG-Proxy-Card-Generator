@@ -44,6 +44,13 @@ UNSUPPORTED = {"planar", "scheme", "vanguard", "art_series", "emblem", "augment"
 
 SECTIONS = {"deck", "sideboard", "commander", "companion", "maybeboard", "tokens"}
 
+UB = "universesbeyond"
+"""`promo_types` marks a licensed crossover printing per card, not per set.
+
+`Sol Ring` and `Lightning Bolt` both came back from Marvel Super Heroes Commander, and only
+the ones carrying this are actually reskinned — which is why the set is not the test.
+"""
+
 _LINE = re.compile(
     r"""^
     (?:(?P<qty>\d+)\s*[xX]?\s+)?     # "4 ", "4x ", or nothing
@@ -189,6 +196,9 @@ def _face(data, face, position):
         # (BUILD-SPEC §9.2). Colour identity is the card's, not the side's.
         "color_identity": data.get("color_identity", []),
         "art_crop": images.get("art_crop"),
+        # Whether the art above is a licensed crossover rather than the card's own.
+        # `art_reference()` is what acts on it; see the measurement in its docstring.
+        "is_crossover": UB in (data.get("promo_types") or []),
         # Both halves of a split/adventure/room, which print on this one face. None when
         # the card has no halves, and unused on a two-sided card where each side is its own
         # face record.
@@ -202,13 +212,60 @@ def faces(card):
     This is the generation plan for one decklist line, and therefore what credits are
     counted from — one credit per face, per BUILD-SPEC §12.1.
     """
-    data = card.data
+    return _faces(card.data)
+
+
+def _faces(data):
     if data["layout"] in TWO_SIDED:
         return [
             _face(data, f, position)
             for f, position in zip(data["card_faces"], ("FRONT", "BACK"))
         ]
     return [_face(data, None, "SINGLE")]
+
+
+def art_reference(face):
+    """The art to show the model as this card's own artwork, or None to show it nothing.
+
+    `/cards/collection` answers a bare name with the newest printing, and since June 2026
+    that is a licensed crossover for a lot of staples. MEASURED 2026-08-09: `Lightning Bolt`
+    resolved to Marvel Super Heroes Commander, whose art is Thor — the image model refuses
+    it outright with `PROHIBITED_CONTENT`, so the card cannot be generated at all — and
+    `Swords to Plowshares` resolved to the same set and quietly painted Hawkeye's farm under
+    a dark-fantasy brief. Both look like prompt failures and neither is one.
+
+    A crossover is a skin, not the card's identity, so we ask for the oldest printing that
+    is not one. Lightning Bolt then gets Christopher Rush's Alpha bolt, which is what the
+    proposal means by "the recognizable identity of the original card".
+
+    One request, and only for the cards that need it — the batch resolve is untouched.
+    """
+    if not face["is_crossover"]:
+        return face["art_crop"]
+
+    time.sleep(DELAY)
+    response = requests.get(
+        f"{API}/cards/search",
+        params={
+            "q": f'!"{face["display_name"]}" not:ub game:paper',
+            "order": "released",
+            "dir": "asc",
+            "unique": "art",
+        },
+        headers=HEADERS,
+        timeout=30,
+    )
+    # 404 is Scryfall's empty result: the card exists ONLY as a crossover, so there is no
+    # earlier art to fall back to. Send no reference rather than the one we know is refused
+    # — the brief still carries the card's own text, which generates fine.
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+
+    for candidate in _faces(response.json()["data"][0]):
+        if candidate["face_position"] == face["face_position"]:
+            return candidate["art_crop"]
+    return None
 
 
 def resolve_decklist(text):

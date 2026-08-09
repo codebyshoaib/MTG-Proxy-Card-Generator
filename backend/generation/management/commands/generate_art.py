@@ -49,16 +49,15 @@ class Command(BaseCommand):
             raise CommandError(f"{resolved.name}: layout {resolved.layout} is not supported")
 
         for face in scryfall.faces(resolved):
-            prompt = prompts.art_only(face, style)
+            url = None if no_reference else scryfall.art_reference(face)
+            prompt = prompts.art_only(face, style, reference=bool(url))
             self.stdout.write(f"--- {face['name']} ({face['face_position']})\n{prompt}\n")
             if dry_run:
                 continue
 
             reference = None
-            if not no_reference and face["art_crop"]:
-                response = requests.get(
-                    face["art_crop"], headers=scryfall.HEADERS, timeout=30
-                )
+            if url:
+                response = requests.get(url, headers=scryfall.HEADERS, timeout=30)
                 response.raise_for_status()
                 reference = response.content
 

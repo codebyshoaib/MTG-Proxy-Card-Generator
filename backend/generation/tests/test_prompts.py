@@ -37,9 +37,16 @@ class ArtOnlyBriefTests(SimpleTestCase):
         for banned in ("no text", "no mana symbols", "no border", "no frame", "no banner"):
             self.assertIn(banned, brief)
 
-    def test_reference_is_only_mentioned_when_one_exists(self):
+    def test_reference_is_only_described_when_one_is_attached(self):
         self.assertIn("attached image", prompts.art_only(GREEN))
-        self.assertNotIn("attached image", prompts.art_only({**GREEN, "art_crop": None}))
+        self.assertNotIn("attached image", prompts.art_only(GREEN, reference=False))
 
     def test_style_is_passed_through_verbatim(self):
         self.assertIn("Art style: dark fantasy oil", prompts.art_only(GREEN, "dark fantasy oil"))
+
+    def test_the_style_is_told_it_outranks_the_reference(self):
+        """Swords to Plowshares came back a sunlit farm under a dark-fantasy brief because
+        the brief asked to preserve the setting and never said which side wins."""
+        brief = prompts.art_only(GREEN, "dark fantasy oil")
+        self.assertIn("the art style wins", brief)
+        self.assertIn("not its setting", brief)

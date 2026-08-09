@@ -20,6 +20,7 @@ The suite is offline: every card here is loaded from that file, never fetched.
 """
 
 import json
+import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -258,3 +259,44 @@ class ResolveDecklistTest(TestCase):
     def test_quantity_is_carried_through(self):
         plan = self._resolve("4 Craterhoof Behemoth")
         self.assertEqual(plan["entries"][0]["quantity"], 4)
+
+
+class CrossoverArtTests(TestCase):
+    """`promo_types` marks a licensed crossover, and only those pay for a second lookup.
+
+    The substitution itself is one live Scryfall request and is not exercised here; what is
+    covered is the flag that decides whether it happens at all, because a false positive
+    costs a request on every card in every deck.
+    """
+
+    def test_a_crossover_printing_is_flagged(self):
+        card = Card(
+            scryfall_id=uuid.uuid4(),
+            name="Lightning Bolt",
+            layout="normal",
+            data={
+                "id": str(uuid.uuid4()),
+                "name": "Lightning Bolt",
+                "layout": "normal",
+                "promo_types": ["universesbeyond"],
+            },
+        )
+        self.assertTrue(scryfall.faces(card)[0]["is_crossover"])
+
+    def test_an_ordinary_printing_is_not_flagged_and_keeps_its_own_art(self):
+        card = Card(
+            scryfall_id=uuid.uuid4(),
+            name="Counterspell",
+            layout="normal",
+            data={
+                "id": str(uuid.uuid4()),
+                "name": "Counterspell",
+                "layout": "normal",
+                "promo_types": ["surgefoil"],
+                "image_uris": {"art_crop": "https://example.test/counterspell.jpg"},
+            },
+        )
+        face = scryfall.faces(card)[0]
+        self.assertFalse(face["is_crossover"])
+        # No network: a non-crossover resolves to its own art.
+        self.assertEqual(scryfall.art_reference(face), "https://example.test/counterspell.jpg")
