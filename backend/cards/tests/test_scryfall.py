@@ -298,5 +298,7 @@ class CrossoverArtTests(TestCase):
         )
         face = scryfall.faces(card)[0]
         self.assertFalse(face["is_crossover"])
-        # No network: a non-crossover resolves to its own art.
-        self.assertEqual(scryfall.art_reference(face), "https://example.test/counterspell.jpg")
+        # No network: a non-crossover resolves to its own art and is not licensed-only.
+        self.assertEqual(
+            scryfall.art_reference(face), ("https://example.test/counterspell.jpg", False)
+        )

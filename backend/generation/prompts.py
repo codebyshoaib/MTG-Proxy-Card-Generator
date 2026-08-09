@@ -21,6 +21,40 @@ FORBIDDEN = (
 )
 
 
+def _subject(face, licensed):
+    """The line that says what the picture is of.
+
+    On a card that exists only as a licensed crossover, the proper noun is the whole
+    problem. MEASURED 2026-08-09: "Hulk, Bruce Banner" is refused with PROHIBITED_CONTENT
+    with the art attached AND without it, while the same card's type line — "Legendary
+    Creature — Gamma Berserker Hero", trample, mono-red — generates first try.
+
+    That is not the refusal evaded, it is a different and smaller thing asked for: the
+    card's game identity, which is ours to draw, instead of a studio's character, which is
+    not. The subtypes are already a character description, so the card loses nothing
+    mechanical — same types, same colour, same keywords.
+    """
+    if not licensed:
+        return f"Name: {face['name']}"
+    types, dash, subtypes = face["type_line"].partition("—")
+    if dash and subtypes.strip():
+        legendary = "legendary " if "Legendary" in types else ""
+        return f"Subject: a {legendary}{subtypes.strip().lower()}"
+    return f"Subject: a {types.strip().lower()}"
+
+
+def _scrub(text, name):
+    """Rules text with a licensed character's name replaced by what it refers to.
+
+    Legendary cards template their own name into their abilities — "Whenever Hulk attacks"
+    — so the name survives in the rules text after the Name line is gone, and one occurrence
+    is enough to be refused.
+    """
+    for token in (name, name.split(",")[0].strip()):
+        text = text.replace(token, "this creature")
+    return text
+
+
 def _palette(color_identity):
     if not color_identity:
         return (
@@ -36,7 +70,7 @@ def _palette(color_identity):
     )
 
 
-def art_only(face, style=None, reference=True):
+def art_only(face, style=None, reference=True, licensed=False):
     """The Art Only brief for one face (`cards.scryfall.faces()` produces the face).
 
     `style` is the user's chosen look, passed through verbatim. Omitted, the model is left
@@ -46,17 +80,23 @@ def art_only(face, style=None, reference=True):
     call and not the face's, because `scryfall.art_reference()` withholds the attachment on
     a crossover-only card — and a brief that describes an attachment that is not there sends
     the model looking for an image it cannot see.
+
+    `licensed` says the card exists ONLY as a licensed crossover, so its name belongs to a
+    studio rather than to Magic. See `_subject()` for what that changes and why.
     """
     lines = [
         "You are a senior Magic: The Gathering card artist.",
         "",
         "Paint the artwork for this card:",
-        f"Name: {face['name']}",
+        _subject(face, licensed),
         f"Type: {face['type_line']}",
     ]
     if face.get("oracle_text"):
-        lines.append(f"Rules text: {face['oracle_text']}")
-    if face.get("flavor_text"):
+        text = face["oracle_text"]
+        lines.append(f"Rules text: {_scrub(text, face['name']) if licensed else text}")
+    # Flavour text is dropped entirely on a licensed card rather than scrubbed: it is the
+    # character's own voice ("Hulk smash!") and nothing survives taking the name out of it.
+    if face.get("flavor_text") and not licensed:
         lines.append(f"Flavour text: {face['flavor_text']}")
     lines += ["", _palette(face.get("color_identity") or [])]
 

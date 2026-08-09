@@ -225,7 +225,13 @@ def _faces(data):
 
 
 def art_reference(face):
-    """The art to show the model as this card's own artwork, or None to show it nothing.
+    """(art to show the model, whether the card exists ONLY as a licensed crossover).
+
+    The second value is why the first can be None, and the caller needs both: no art plus
+    "ordinary card" means generate from the card's own name, while no art plus "licensed
+    only" means the name is a studio's character and the brief must work from the type line
+    instead (`generation.prompts._subject`). Both come out of the same search, so asking
+    for them separately would pay for it twice.
 
     `/cards/collection` answers a bare name with the newest printing, and since June 2026
     that is a licensed crossover for a lot of staples. MEASURED 2026-08-09: `Lightning Bolt`
@@ -241,7 +247,7 @@ def art_reference(face):
     One request, and only for the cards that need it — the batch resolve is untouched.
     """
     if not face["is_crossover"]:
-        return face["art_crop"]
+        return face["art_crop"], False
 
     time.sleep(DELAY)
     response = requests.get(
@@ -256,16 +262,15 @@ def art_reference(face):
         timeout=30,
     )
     # 404 is Scryfall's empty result: the card exists ONLY as a crossover, so there is no
-    # earlier art to fall back to. Send no reference rather than the one we know is refused
-    # — the brief still carries the card's own text, which generates fine.
+    # earlier art to fall back to and the name is a licensed character's.
     if response.status_code == 404:
-        return None
+        return None, True
     response.raise_for_status()
 
     for candidate in _faces(response.json()["data"][0]):
         if candidate["face_position"] == face["face_position"]:
-            return candidate["art_crop"]
-    return None
+            return candidate["art_crop"], False
+    return None, False
 
 
 def resolve_decklist(text):

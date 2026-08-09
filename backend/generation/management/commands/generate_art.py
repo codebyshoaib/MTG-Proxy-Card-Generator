@@ -49,9 +49,18 @@ class Command(BaseCommand):
             raise CommandError(f"{resolved.name}: layout {resolved.layout} is not supported")
 
         for face in scryfall.faces(resolved):
-            url = None if no_reference else scryfall.art_reference(face)
-            prompt = prompts.art_only(face, style, reference=bool(url))
+            url, licensed = scryfall.art_reference(face)
+            if no_reference:
+                url = None
+            prompt = prompts.art_only(face, style, reference=bool(url), licensed=licensed)
             self.stdout.write(f"--- {face['name']} ({face['face_position']})\n{prompt}\n")
+            if licensed:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"{face['name']} exists only as a licensed crossover. Painting its "
+                        "game identity from the type line, not the character."
+                    )
+                )
             if dry_run:
                 continue
 
