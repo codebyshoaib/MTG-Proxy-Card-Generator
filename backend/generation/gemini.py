@@ -28,14 +28,21 @@ def client():
     return _client
 
 
+class NoImage(RuntimeError):
+    """The call succeeded and produced no image. Named so a retry loop can catch just this."""
+
+
 def generate(prompt, reference=None):
     """PNG bytes for one prompt.
 
     `reference` is image bytes — Scryfall's `art_crop` — attached ahead of the prompt so the
     model reads the original artwork before the brief that modifies it.
 
-    A response with no image raises. Measured once in 24 generations (handover §7): it is
-    transient, but it costs a generation either way, so it must never pass as an empty file.
+    A response with no image raises, carrying the model's own `finish_reason`. There are two
+    ways to get one and they are not the same failure: an empty part list is the transient
+    miss measured once in 24 generations (handover §7) and is worth a retry, while a
+    `finish_reason` of PROHIBITED_CONTENT or SAFETY will repeat for that prompt forever.
+    Both cost a generation, so neither may pass as an empty file.
     """
     parts = []
     if reference:
@@ -49,7 +56,16 @@ def generate(prompt, reference=None):
             image_config=types.ImageConfig(aspect_ratio="3:4", image_size="2K"),
         ),
     )
-    for part in response.candidates[0].content.parts:
+    # Every level of this is optional in a refusal: no candidates, a candidate with no
+    # content, or content with no parts. Walking it blind turns a refusal into a TypeError
+    # that says nothing about why the card failed.
+    candidate = (response.candidates or [None])[0]
+    parts = getattr(getattr(candidate, "content", None), "parts", None) or []
+    for part in parts:
         if part.inline_data:
             return part.inline_data.data
-    raise RuntimeError(f"{MODEL} returned no image. Model said: {response.text!r}")
+    raise NoImage(
+        f"{MODEL} returned no image "
+        f"(finish_reason={getattr(candidate, 'finish_reason', None)}). "
+        f"Model said: {getattr(response, 'text', None)!r}"
+    )
