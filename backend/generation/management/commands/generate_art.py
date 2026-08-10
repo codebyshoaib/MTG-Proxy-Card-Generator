@@ -51,7 +51,8 @@ class Command(BaseCommand):
             raise CommandError(f"{resolved.name}: layout {resolved.layout} is not supported")
 
         for face in scryfall.faces(resolved):
-            url, licensed = scryfall.art_reference(face)
+            original = scryfall.art_reference(face)
+            url, licensed = original.art_crop, original.licensed
             if no_reference:
                 url = None
             prompt = prompts.art_only(
