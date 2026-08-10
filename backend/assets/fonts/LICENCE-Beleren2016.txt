@@ -1,0 +1,34 @@
+Beleren 2016 Bold / Beleren 2016 SmallCaps Bold
+===============================================
+
+NOT CLEARED FOR REDISTRIBUTION. Resolve before the Milestone 3 client handover.
+
+Beleren is the typeface Wizards of the Coast commissioned for Magic: The Gathering card
+names, type lines and power/toughness. It is the reason our composited text can match the
+reference site exactly rather than approximately.
+
+It is also not ours to ship. These files came from
+https://github.com/saeris/typeface-beleren-bold, whose own README states:
+
+    "The fonts in this library have been extracted from Magic: The Gathering's official
+     website, which is owned by Wizards of the Coast. This is not an official or authorized
+     library! It is published for non-commercial use and comes with no support."
+
+    "All fonts are copyright of Wizards of the Coast."
+
+That package ships an MIT LICENSE.md. The MIT grant covers Drake Costa's CSS wrapper and
+packaging, NOT the typeface — a redistributor cannot license away a third party's copyright.
+So there is no licence here that permits putting these .ttf files in a repository handed to
+a paying client.
+
+Three ways out, in the order they should be considered:
+
+1. Buy or negotiate a licence for the real face, if Wizards licenses it at all.
+2. Ship a cleanly-licensed lookalike and keep Beleren as a local-only development override.
+   PlayfairDisplay-Bold.ttf (SIL OFL) is already vendored for exactly this role and was
+   chosen against seven candidates on 2026-08-10 — see cards/fonts.py.
+3. Commission or draw a display face.
+
+Until one of those happens, `cards.fonts.UNLICENSED` lists these files and
+`cards/tests/test_fonts.py::test_every_vendored_face_is_either_licensed_or_flagged` fails
+if anything else joins them unnoticed. The list is the handover checklist.
