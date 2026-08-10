@@ -143,10 +143,98 @@ class CreativeFullBriefTests(SimpleTestCase):
 
     def test_the_surfaces_are_demanded_and_lettering_is_forbidden(self):
         brief = prompts.creative_full(GREEN, "Comic Book")
-        for surface in ("horizontal ledge", "NARROW horizontal strip", "rectangular slab"):
+        for surface in ("plate across the very top", "NARROW horizontal strip", "broad pale strip"):
             self.assertIn(surface, brief)
         self.assertIn("NO WRITING ANYWHERE", brief)
         self.assertIn("no fake writing", brief)
+
+    def test_the_edge_is_asked_for_as_material_and_never_as_a_border(self):
+        """~20 of 24 reference-site cards build the card's edge out of the scene's material and
+        hang the plates off it; ours were three rectangles floating on a painting with nothing
+        anchoring them. bd mtg-z12 got a gallery mount from the word "border" and concluded the
+        framed look was the failure — it was the noun. Naming the object brings the object, so
+        the shape is asked for and the noun stays out."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("closes in around the scene at the card's edge", brief)
+        self.assertIn("crosses in FRONT of it", brief)
+        for noun in ("border", "frame around", "mount", "inset inside", "matted"):
+            self.assertNotIn(noun, brief)
+
+    def test_the_edge_material_carries_the_colour_as_light(self):
+        """Theirs is a hot orange ribbon of lava; ours came back near-black rock, which is what
+        made the whole card read dark and muddy beside it. The emissive convention _palette
+        enforces for the scene (bd mtg-roq) had never been stated for the edge, and the material
+        list led with "cracked obsidian", so the model painted a dark rim."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("Run the card's colour through it as LIGHT", brief)
+        self.assertIn("not a dark rim around a bright picture", brief)
+        self.assertNotIn("cracked obsidian", brief)
+
+    def test_the_edge_encloses_the_card_and_not_only_the_picture(self):
+        """First generation under the framed brief enclosed the ARTWORK and stopped: both side
+        members died where the lower surfaces began, the bottom never closed, and the two bottom
+        corners came back as dead black wedges. To a model painting a picture, "the card's edge"
+        and "around the scene" are the same sentence."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("encloses the whole CARD", brief)
+        self.assertIn("closes across the bottom", brief)
+        self.assertIn("No corner and no edge of this card is left as empty dark space", brief)
+
+    def test_the_surface_count_is_restated_after_the_surfaces_are_described(self):
+        """"and no others" sat in the same sentence as the descriptions and lost to them: the
+        generation after the enclosing-edge line was added came back with a row of THREE extra
+        glowing slabs between the picture and the type strip, which also stole the rules slab's
+        height and made the overflow warning fire for real."""
+        brief = prompts.creative_full({**GREEN, "power": "5"})
+        self.assertIn("That is 4 and only 4", brief)  # 3 surfaces + the P/T boss
+        self.assertIn("do not split a surface into a row of smaller ones", brief)
+        self.assertIn("never another plate, tablet, ingot", brief)
+
+    def test_exactly_one_pale_strip_is_asked_for_however_many_abilities(self):
+        """REVERSED 2026-08-10 after a four-card batch, and this test is the record of it. The
+        reference site sets one pale strip per ability; asked of our model it does not work.
+        One-ability cards (Vampiric Tutor, Sol Ring) came back with large readable text filling
+        the panel; three- and two-ability cards (Terror, Craterhoof) came back with tiny text in
+        half-empty strips, and Craterhoof inverted the requested height ratio outright.
+
+        The mechanism was measured in test_compositor before the first strip was ever painted:
+        every strip shares one type size, so the size is capped by the WORST-fitting strip, while
+        one slab lends spare height between paragraphs — 115px against 97px at equal area."""
+        for oracle in ("Trample", "Flying\nTrample", "Flying\nTrample\nHaste\nVigilance"):
+            with self.subTest(oracle=oracle):
+                brief = prompts.creative_full({**GREEN, "oracle_text": oracle})
+                self.assertIn("ONE broad pale strip across the lower third", brief)
+                self.assertNotIn("SEPARATE pale strips", brief)
+                self.assertIn("Paint exactly these 3 raised surfaces", brief)
+
+    def test_the_vertical_order_of_the_surfaces_is_stated_as_a_requirement(self):
+        """MEASURED across ten generations of one card at identical settings: their surfaces move
+        a great deal — the type plate sits under the title on some and halfway down on others,
+        the rules panel is a full-width band on some and a narrow right-hand float on others —
+        but the vertical ORDER is the same on all ten. Ours listed the surfaces and never said
+        the order mattered, and two consecutive generations put the name plate in the lower
+        third."""
+        brief = prompts.creative_full({**GREEN, "power": "5"})
+        self.assertIn("Their order down the card is fixed", brief)
+        self.assertIn("TOPMOST thing on the card", brief)
+        self.assertIn("Nothing may be painted above the top plate", brief)
+
+    def test_the_length_hint_is_a_total_and_a_paragraph_count_never_the_text(self):
+        """You cannot paint text you were never given — Atraxa came back fully lettered from this
+        line's predecessor. The paragraph count tells the model the strip needs room for the gaps
+        between abilities without showing it a single word."""
+        brief = prompts.creative_full({**GREEN, "oracle_text": "Flying\nTrample and haste"})
+        self.assertIn("characters of text, in 2 separate paragraphs", brief)
+        self.assertNotIn("Trample and haste", brief)
+
+    def test_no_surface_may_be_a_plain_rectangle_but_its_text_edges_stay_level(self):
+        """Both halves are load-bearing. Even bevelled rectangles are what made every card in a
+        batch look like the same sticker set; but the compositor lays out axis-aligned lines, and
+        their own Wheel of Fortune — rules text set on a painted diagonal — is the one card in
+        the gallery that is barely readable."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("No surface is a plain rectangle", brief)
+        self.assertIn("stay roughly straight and level", brief)
 
     def test_surfaces_are_described_as_shapes_not_as_fields(self):
         """Naming a field invites filling it: "title banner" got a painted title and "plaque for
@@ -164,8 +252,33 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn(f"about {len(GREEN['oracle_text'])} characters", brief)
 
     def test_the_ban_on_writing_is_the_last_thing_in_the_brief(self):
-        """Stated mid-brief it lost to the furniture description on 2 of 3 cards."""
-        self.assertTrue(prompts.creative_full(GREEN).rstrip().endswith("collide with it."))
+        """Stated mid-brief it lost to the furniture description on 2 of 3 cards. It keeps the
+        last position even against the purple ban added after it: painted lettering collides with
+        the text we composite and makes the card unusable, where a purple tint misstates the
+        colour identity of a card that still works."""
+        for identity in ([], ["G"], ["B"], ["W", "U"]):
+            with self.subTest(colour=identity):
+                brief = prompts.creative_full({**GREEN, "color_identity": identity})
+                self.assertTrue(brief.rstrip().endswith("collide with it."))
+
+    def test_a_non_black_card_repeats_the_purple_ban_late(self):
+        """MEASURED 2026-08-10, eight-card batch: mono-green Craterhoof came back with magenta
+        crystal growths. The ban was already in _palette near the top, and this file has learned
+        twice that a ban stated early loses to the description that follows it. Purple reading as
+        black mana is the client's reported bug and a BUILD-SPEC §7 failure, not a preference."""
+        green = prompts.creative_full(GREEN)
+        self.assertIn("no purple, violet, magenta or lilac", green)
+        self.assertLess(green.index("no purple, violet"), green.index("ABSOLUTE REQUIREMENT"))
+
+    def test_a_black_card_is_not_told_to_avoid_purple(self):
+        """Purple reads as black mana, so on a black card it is correct rather than a defect."""
+        black = prompts.creative_full({**GREEN, "color_identity": ["B"]})
+        self.assertNotIn("no purple, violet, magenta or lilac", black)
+
+    def test_the_top_plate_may_not_be_omitted(self):
+        """Sol Ring came back with no name plate at all in the eight-card batch, so its name went
+        unprinted — the narrow strip already carried this instruction and the top plate did not."""
+        self.assertIn("Do not omit this piece — every card has one", prompts.creative_full(GREEN))
 
     def test_furniture_is_made_of_the_art_not_laid_over_it(self):
         """A frame overlay on an art window scored 0/3 and read as art in a box (bd mtg-9pi)."""
@@ -188,3 +301,32 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn("THE ARTWORK DOMINATES", brief)
         self.assertIn("no more than a third of the card's height", brief)
         self.assertIn("Do not omit this piece", brief)
+
+    def test_the_display_plates_are_dark_and_only_the_rules_slab_is_light(self):
+        """The earlier reading — "their panels are cream parchment" — was taken from the rules
+        slab alone and applied to all three, giving cream-on-cream-on-cream with black text
+        everywhere and no hierarchy. Across their gallery the two display surfaces are dark with
+        warm gold lettering. compositor.panel_palette already picks gold-on-dark or ink-on-light
+        from the pixels, so this is a brief change with no code behind it."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("narrow strip are DARK", brief)
+        self.assertIn("broad strip is LIGHT", brief)
+        self.assertIn("Do not paint all three the same value", brief)
+        self.assertNotIn("Each surface must be PALE", brief)
+
+    def test_legibility_is_asked_for_as_an_even_middle_not_as_an_empty_surface(self):
+        """"quiet: low contrast, low detail, no busy texture and no bright hotspot" produced dead
+        flat beige. Their slab on Terror of the Peaks is glowing lava with cracks running through
+        it and the black text still reads, because what legibility needs is an even middle."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("keep that band even in value", brief)
+        self.assertIn("veins of glow", brief)
+        self.assertNotIn("low contrast, low detail", brief)
+
+    def test_a_colourless_card_forbids_each_mana_colour_by_name(self):
+        """"No one mana colour may dominate" is too abstract: Sol Ring under Comic Book came back
+        a fire-red card with an orange ring, and colourless reading as red is a §7 failure."""
+        brief = prompts.creative_full({**GREEN, "color_identity": []})
+        self.assertIn("COLOURLESS", brief)
+        for banned in ("No red fire", "no green growth", "no blue water", "no black rot"):
+            self.assertIn(banned, brief)
