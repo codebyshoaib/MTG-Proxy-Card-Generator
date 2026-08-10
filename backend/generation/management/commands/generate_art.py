@@ -27,6 +27,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("card")
         parser.add_argument("--style", default=None)
+        parser.add_argument("--direction", default=None, help="Art Direction, BUILD-SPEC §10")
+        parser.add_argument("--palette", default=None, help="Colour Palette, BUILD-SPEC §10")
         parser.add_argument("--out", default="art-out", type=Path)
         parser.add_argument(
             "--no-reference",
@@ -40,7 +42,7 @@ class Command(BaseCommand):
             "--dry-run", action="store_true", help="Print the prompt, spend nothing."
         )
 
-    def handle(self, card, style, out, no_reference, dry_run, **_):
+    def handle(self, card, style, out, no_reference, dry_run, direction, palette, **_):
         found, missing = scryfall.resolve([card])
         if missing:
             raise CommandError(f"Scryfall does not know {missing[0]!r}")
@@ -52,7 +54,14 @@ class Command(BaseCommand):
             url, licensed = scryfall.art_reference(face)
             if no_reference:
                 url = None
-            prompt = prompts.art_only(face, style, reference=bool(url), licensed=licensed)
+            prompt = prompts.art_only(
+                face,
+                style,
+                reference=bool(url),
+                licensed=licensed,
+                direction=direction,
+                palette=palette,
+            )
             self.stdout.write(f"--- {face['name']} ({face['face_position']})\n{prompt}\n")
             if licensed:
                 self.stdout.write(
