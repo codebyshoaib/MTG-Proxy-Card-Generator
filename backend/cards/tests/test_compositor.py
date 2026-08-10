@@ -253,6 +253,61 @@ class StripLayoutTests(SimpleTestCase):
         self.assertLessEqual(keyword, plain)
 
 
+class FlavourTextTests(SimpleTestCase):
+    """`include_flavor_text` is named for the reference site's own generate payload, so a frontend
+    passes its toggle straight through. Off by default: flavour competes with the rules for the
+    one panel we get, and rules text losing size to prose is the worse trade."""
+
+    FLAVOURED = {**FACE, "flavor_text": "The peaks remember every name they have burned."}
+    PANEL = {"rules": [(0.06, 0.60, 0.94, 0.94)]}
+
+    def test_flavour_is_absent_unless_it_is_asked_for(self):
+        off, _ = compositor.compose(card((228, 208, 172)), self.FLAVOURED, self.PANEL)
+        on, _ = compositor.compose(
+            card((228, 208, 172)), self.FLAVOURED, self.PANEL, include_flavor_text=True
+        )
+        x0, y0, x1, y1 = compositor._box(self.PANEL["rules"][0], on.size)
+        self.assertNotEqual(
+            off.crop((x0, y0, x1, y1)).tobytes(), on.crop((x0, y0, x1, y1)).tobytes()
+        )
+
+    def test_a_card_with_no_flavour_text_is_unchanged_by_the_flag(self):
+        """Most cards have none, and the flag must not cost them a divider or a reflow."""
+        plain, _ = compositor.compose(card((228, 208, 172)), FACE, self.PANEL)
+        asked, _ = compositor.compose(
+            card((228, 208, 172)), FACE, self.PANEL, include_flavor_text=True
+        )
+        self.assertEqual(plain.tobytes(), asked.tobytes())
+
+    def test_flavour_is_italic_and_never_set_as_a_keyword_line(self):
+        """"Hulk smash!" matches the bare-keyword shape and would otherwise be set large and
+        heavy in the display face, which is how a real card sets Flying — not flavour."""
+        lines = textlayout.atoms("Flying", '"Hulk smash!"')
+        self.assertTrue(all(a.italic for a in lines[1]))
+        self.assertFalse(any(a.keyword for a in lines[1]))
+        self.assertTrue(textlayout.starts_flavour(lines[1]))
+        self.assertFalse(textlayout.starts_flavour(lines[0]))
+
+    def test_flavour_lands_in_the_last_panel_only(self):
+        """Splitting it across panels would put uncoloured prose above game text, and a player has
+        to be able to tell at a glance which words are rules."""
+        import inspect
+
+        source = inspect.getsource(compositor._rules)
+        self.assertIn("flavours[-1] = flavour", source)
+
+    def test_flavour_takes_room_from_the_rules_text(self):
+        """It shares the panel, so asking for it can only shrink the type. That is the trade the
+        flag exists to make explicit rather than silent."""
+        box = [(900, 300)]
+        without, _ = textlayout.fit_across(["Flying"], box, 2400 * compositor.RULES_SIZE)
+        with_flavour, _ = textlayout.fit_across(
+            ["Flying"], box, 2400 * compositor.RULES_SIZE,
+            flavours=["The peaks remember every name they have burned, and they are patient."],
+        )
+        self.assertLessEqual(with_flavour, without)
+
+
 class NoLineSpreadTests(SimpleTestCase):
     """Extra leading to fill a tall strip was tried and is wrong by the measurement that
     motivated it: ink-to-pitch is 0.49 on their card against 0.385 on ours, so theirs carries

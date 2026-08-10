@@ -54,6 +54,10 @@ class Atom:
     italic: bool = False
     symbol: bool = False
     keyword: bool = False
+    # Flavour text is not rules text. A real card sets it italic BELOW a divider rule, and it
+    # carries no game meaning — which is exactly why it must be visually separable: a player
+    # reading the card has to be able to tell at a glance which words are rules.
+    flavour: bool = False
 
 
 def is_keyword_line(paragraph):
@@ -79,16 +83,24 @@ def smart_quotes(text):
     return "".join(out)
 
 
-def atoms(text):
+def atoms(text, flavour=""):
     """Rules text as a list of lines, each a list of `Atom`.
 
     Splits on the newlines Scryfall uses between abilities, keeps `{2}{R}` tokens whole, and
     marks the two things MTG sets in italic: an opening ability word, and reminder text in
     parentheses.
+
+    `flavour` is appended as further paragraphs, every atom italic and flagged. It is opt-in
+    because the reference site makes it opt-in (`include_flavor_text` in their generate payload),
+    and because it competes with the rules text for the one panel we get.
     """
     out = []
-    for paragraph in smart_quotes(text).split("\n"):
-        keyword = is_keyword_line(paragraph)
+    paragraphs = [(p, False) for p in smart_quotes(text).split("\n")]
+    paragraphs += [(p, True) for p in smart_quotes(flavour).split("\n") if p.strip()]
+    for paragraph, is_flavour in paragraphs:
+        # A flavour line is never a keyword line however short it is: "Hulk smash!" matches the
+        # keyword shape and would otherwise be set large and heavy in the display face.
+        keyword = is_keyword_line(paragraph) and not is_flavour
         italic_until = 0
         match = ABILITY_WORD.match(paragraph)
         if match:
@@ -106,7 +118,14 @@ def atoms(text):
             depth = max(0, depth + opens - closes)
             for piece in _split_symbols(chunk):
                 line.append(
-                    piece if piece.symbol else Atom(piece.text, italic, keyword=keyword)
+                    piece
+                    if piece.symbol
+                    else Atom(
+                        piece.text,
+                        italic or is_flavour,
+                        keyword=keyword,
+                        flavour=is_flavour,
+                    )
                 )
             cursor += len(chunk)
         out.append(line)
@@ -137,6 +156,11 @@ def width_of(atom, regular, italic, pip_px):
     if atom.symbol:
         return pip_px
     return (italic if atom.italic else regular).getlength(atom.text)
+
+
+def starts_flavour(line):
+    """True if this visual line is where the flavour text begins — where the divider goes."""
+    return bool(line) and line[0].flavour
 
 
 def wrap(lines, size, max_width, exclude=None):
@@ -201,7 +225,7 @@ def block_height(wrapped, line_height):
     return len(wrapped) * line_height + round(gaps * line_height * PARAGRAPH_GAP)
 
 
-def fit_across(paragraphs, boxes, max_size, min_size=13, excludes=None):
+def fit_across(paragraphs, boxes, max_size, min_size=13, excludes=None, flavours=None):
     """Largest ONE size at which every paragraph fits its own panel.
 
     MEASURED 2026-08-10 against tcggenerator.com's own full-resolution Terror of the Peaks
@@ -217,8 +241,12 @@ def fit_across(paragraphs, boxes, max_size, min_size=13, excludes=None):
     Returns (size, [(wrapped, line_height, pip_px), ...]) parallel to `paragraphs`, and falls
     back to `min_size` overflowing rather than failing — same contract as `fit`.
     """
-    logical = [atoms(text) for text in paragraphs]
-    scales = [KEYWORD_SCALE if is_keyword_line(text) else 1.0 for text in paragraphs]
+    flavours = list(flavours or [""] * len(paragraphs))
+    logical = [atoms(text, flavour) for text, flavour in zip(paragraphs, flavours)]
+    scales = [
+        KEYWORD_SCALE if is_keyword_line(text) and not flavour else 1.0
+        for text, flavour in zip(paragraphs, flavours)
+    ]
     excludes = list(excludes or [None] * len(paragraphs))
     smallest = None
     for size in range(int(max_size), int(min_size) - 1, -1):

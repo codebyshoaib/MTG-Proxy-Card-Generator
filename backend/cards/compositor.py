@@ -253,7 +253,7 @@ def _write(draw, xy, text, font, fill, stroke, size, anchor=None, emboss=False):
     )
 
 
-def compose(png, face, panels):
+def compose(png, face, panels, include_flavor_text=False):
     """(finished card, whether the rules text overflowed its panel).
 
     A panel the detector did not find is skipped rather than guessed at — a card missing its type
@@ -272,7 +272,11 @@ def compose(png, face, panels):
     if panels.get("rules") and face.get("oracle_text"):
         shield = _box(panels["pt"], image.size) if panels.get("pt") else None
         boxes = [_box(panel, image.size) for panel in _rules_panels(panels["rules"])]
-        overflowed = _rules(image, face["oracle_text"], boxes, shield, light)
+        # Named to match the reference site's own generate payload, so the frontend passes its
+        # toggle straight through. Off by default: flavour text competes with the rules for the
+        # one panel we get, and rules text losing size to prose is the worse trade.
+        flavour = (face.get("flavor_text") or "") if include_flavor_text else ""
+        overflowed = _rules(image, face["oracle_text"], boxes, shield, light, flavour)
     if panels.get("pt") and face.get("power") is not None:
         pt = f"{face['power']}/{face['toughness']}"
         _display(image, pt, _box(panels["pt"], image.size), 0.50, light)
@@ -413,7 +417,18 @@ def _assign(text, areas):
     return out
 
 
-def _rules(image, text, boxes, shield=None, light=(1, 1)):
+def _divider(draw, x, y, width, colour):
+    """The hairline a real card rules between its rules text and its flavour text.
+
+    Drawn as a soft-ended line rather than a full-width rule: on a painted parchment strip a hard
+    edge-to-edge bar reads as a UI element, where a line that fades out at both ends reads as
+    printed. Same reason the panels are not plain rectangles.
+    """
+    inset = round(width * 0.08)
+    draw.line((x + inset, y, x + width - inset, y), fill=colour[:3] + (110,), width=1)
+
+
+def _rules(image, text, boxes, shield=None, light=(1, 1), flavour=""):
     """Rules text across one or more panels — one oracle paragraph per panel.
 
     MEASURED 2026-08-10 against their own full-resolution Terror of the Peaks: they set the three
@@ -436,6 +451,12 @@ def _rules(image, text, boxes, shield=None, light=(1, 1)):
         measures.append(((x1 - x0) - 2 * pad_x, (y1 - y0) - 2 * pad_y))
     paragraphs = _assign(text, measures)
     boxes = boxes[: len(paragraphs)]
+    # Flavour text belongs to the LAST panel, after every rule. Splitting it across panels would
+    # put uncoloured prose above game text, and a player has to be able to tell at a glance which
+    # words are rules.
+    flavours = [""] * len(paragraphs)
+    if flavour and flavours:
+        flavours[-1] = flavour
 
     inner, pads, excludes = [], [], []
     for box in boxes:
@@ -455,7 +476,9 @@ def _rules(image, text, boxes, shield=None, light=(1, 1)):
         excludes.append(exclude)
 
     ceiling = image.height * RULES_SIZE
-    size, laid = textlayout.fit_across(paragraphs, inner, ceiling, excludes=excludes)
+    size, laid = textlayout.fit_across(
+        paragraphs, inner, ceiling, excludes=excludes, flavours=flavours
+    )
     # A line that straddles the shield's top edge still runs into it, because a line is measured
     # by its top and drawn downwards. Pull each exclusion up by one line and re-fit.
     if any(excludes):
@@ -476,6 +499,8 @@ def _rules(image, text, boxes, shield=None, light=(1, 1)):
         for index, (line, starts_paragraph) in enumerate(lines):
             if starts_paragraph and index:
                 y += gap
+            if textlayout.starts_flavour(line) and index:
+                _divider(draw, pad_x, y - round(gap * 0.45), width, fill)
             _line(layer, draw, line, pad_x, y, size, pip_px, fill, stroke)
             y += lh
         _stamp(image, layer, box, size, shadow, light)
