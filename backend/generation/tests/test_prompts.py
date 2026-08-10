@@ -45,6 +45,20 @@ class ArtOnlyBriefTests(SimpleTestCase):
         """The fallback is what the "Custom Art Style" free-text field rides on."""
         self.assertIn("Art style: dark fantasy oil", prompts.art_only(GREEN, "dark fantasy oil"))
 
+    def test_the_catalogue_matches_the_reference_site_key_for_key(self):
+        """48 styles, keyed by the exact value their API sends as `art_style`, so a frontend can
+        pass the selection straight through with no mapping table in between."""
+        self.assertEqual(len(prompts.STYLES), 48)
+        self.assertEqual(set(prompts.STYLES), set(prompts.STYLE_LABELS))
+        for key in prompts.STYLES:
+            self.assertEqual(key, key.lower().replace(" ", "_").replace(".", ""))
+
+    def test_a_style_resolves_from_its_key_or_its_label(self):
+        """Their API sends snake_case values; their UI shows Title Case labels. Both arrive."""
+        self.assertEqual(prompts._style_text("hr_giger"), prompts._style_text("H.R. Giger"))
+        self.assertEqual(prompts._style_text("neon_noir"), prompts._style_text("Neon Noir"))
+        self.assertIsNone(prompts._style_text(None))
+
     def test_a_known_style_expands_into_its_attributes(self):
         """A bare label gives a generic treatment; the attributes are the look (bd mtg-8x6)."""
         brief = prompts.art_only(GREEN, "Comic Book")
@@ -69,6 +83,10 @@ class ArtOnlyBriefTests(SimpleTestCase):
         """A row listing only light and mood renders photoreal: 'Neon Noir' described neon rim
         light and wet surfaces, and Counterspell came back a cinematic photograph — the client's
         original complaint, reintroduced by us. A medium is what keeps a style illustrative."""
+        # Grown with the catalogue when it went from 8 rows to the reference site's full 48. Each
+        # word here is a MEDIUM someone works in, never a mood or a subject — that distinction is
+        # the whole point of the test, so adding "epic" or "gothic" to make a row pass would
+        # quietly disable it.
         media = (
             "illustration",
             "cartoon",
@@ -78,12 +96,24 @@ class ArtOnlyBriefTests(SimpleTestCase):
             "painting",
             "graffiti",
             "anime",
+            "manga",
+            "render",
+            "sketch",
+            "drawing",
+            "sprite",
+            "poster",
+            "lithograph",
+            "collage",
+            "diorama",
+            "window",
+            "cel",
+            "panel",
         )
-        for label, attributes in prompts.STYLES.items():
-            with self.subTest(style=label):
+        for key, attributes in prompts.STYLES.items():
+            with self.subTest(style=key):
                 self.assertTrue(
                     any(m in attributes for m in media),
-                    f"{label} names no medium, so it will render photoreal",
+                    f"{key} names no medium, so it will render photoreal",
                 )
 
     def test_the_palette_lights_the_scene_and_does_not_repaint_the_subject(self):
@@ -102,6 +132,17 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("belongs to the LIGHT", brief)
         self.assertIn("stone stays grey", brief)
         self.assertNotIn("the ground and the accents", brief)
+
+    def test_the_subject_may_keep_a_colour_the_card_does_not_have(self):
+        """MEASURED 2026-08-11: the paragraph named only NEUTRAL things that keep their colour —
+        stone, steel, bone, smoke — so nothing told the model a subject with a colour of its own
+        may keep it. Mono-red Raphael came back a red turtle again, shell and all, on a card
+        whose whole point is that he is green. The reference site's Raphael is green on the same
+        red card, so their brief permits it and ours did not."""
+        brief = prompts.art_only({**GREEN, "color_identity": ["R"]})
+        self.assertIn("THE SUBJECT KEEPS ITS OWN COLOUR", brief)
+        self.assertIn("a green turtle on a red card stays green", brief)
+        self.assertIn("never paint applied to the subject itself", brief)
 
     def test_a_licensed_card_is_briefed_from_its_type_line_not_its_name(self):
         """Hulk is refused with the art attached AND without it; the same card's type line
@@ -219,6 +260,36 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn("TOPMOST thing on the card", brief)
         self.assertIn("Nothing may be painted above the top plate", brief)
 
+    def test_custom_art_notes_reach_the_brief_verbatim(self):
+        """`custom_art_notes` in their generate payload. Placed after the style so it refines
+        rather than replaces it, and before the furniture so it cannot argue with the surfaces.
+        Verbatim, because it is the one field where second-guessing the user is wrong."""
+        brief = prompts.creative_full(GREEN, "Anime", notes="give it six eyes and no mouth")
+        self.assertIn("Also: give it six eyes and no mouth.", brief)
+        self.assertLess(brief.index("Also: give it"), brief.index("THE CARD'S EDGE"))
+        self.assertGreater(brief.index("Also: give it"), brief.index("Art style:"))
+        self.assertNotIn("Also:", prompts.creative_full(GREEN, "Anime"))
+
+    def test_the_narrow_side_panel_is_offered_only_to_short_cards(self):
+        """The reference site produces a narrow right-hand rules panel on about 2 of every 10
+        cards. It is the best-looking layout they have and the most expensive: half the measure
+        is roughly twice the lines, and text that will not fit at a readable size costs a
+        regeneration. Their brief evidently just permits it; ours permits it only where the
+        arithmetic survives — the long cards are exactly the ones that came back unreadable."""
+        short = prompts.creative_full({**GREEN, "oracle_text": "Counter target spell."})
+        self.assertIn("TALL NARROW", short)
+        long = prompts.creative_full(
+            {**GREEN, "oracle_text": "Flying\n" + "Whenever this creature attacks it gets bigger. " * 5}
+        )
+        self.assertNotIn("TALL NARROW", long)
+
+    def test_the_float_is_still_one_panel_with_level_text_edges(self):
+        """The compositor lays out axis-aligned lines, and their own Wheel of Fortune — rules set
+        on a painted diagonal — is the one card in their gallery that is barely readable."""
+        short = prompts.creative_full({**GREEN, "oracle_text": "Counter target spell."})
+        self.assertIn("Either way it is one panel", short)
+        self.assertIn("straight level top and bottom edges", short)
+
     def test_the_length_hint_is_a_total_and_a_paragraph_count_never_the_text(self):
         """You cannot paint text you were never given — Atraxa came back fully lettered from this
         line's predecessor. The paragraph count tells the model the strip needs room for the gaps
@@ -251,6 +322,18 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertNotIn(GREEN["oracle_text"], brief)
         self.assertIn(f"about {len(GREEN['oracle_text'])} characters", brief)
 
+    def test_runes_get_their_own_sentence_after_the_list(self):
+        """MEASURED 2026-08-11 on Raphael: a band of carved rune-like marks came back in the gap
+        BETWEEN the type plate and the rules panel — a region the ban named as "surfaces" and
+        "edge material" and therefore did not cover. Runes are the recurring form of this failure
+        rather than one item in a list of twelve, and the reference site has it too: their
+        Twinflame Tyrant carries painted fake runes beside its real composited text."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("not in the gaps between them", brief)
+        self.assertIn("RUNES ESPECIALLY", brief)
+        self.assertIn("failed even when the marks are meant as ornament", brief)
+        self.assertGreater(brief.index("RUNES ESPECIALLY"), brief.index("ABSOLUTE REQUIREMENT"))
+
     def test_the_ban_on_writing_is_the_last_thing_in_the_brief(self):
         """Stated mid-brief it lost to the furniture description on 2 of 3 cards. It keeps the
         last position even against the purple ban added after it: painted lettering collides with
@@ -259,7 +342,13 @@ class CreativeFullBriefTests(SimpleTestCase):
         for identity in ([], ["G"], ["B"], ["W", "U"]):
             with self.subTest(colour=identity):
                 brief = prompts.creative_full({**GREEN, "color_identity": identity})
-                self.assertTrue(brief.rstrip().endswith("collide with it."))
+                # The rune sentence is part of the same ban and is allowed to follow it; nothing
+                # about the FURNITURE may.
+                tail = brief.rstrip()
+                self.assertTrue(
+                    tail.endswith("collide with it.") or tail.endswith("a crack, a leaf."),
+                    tail[-60:],
+                )
 
     def test_a_non_black_card_repeats_the_purple_ban_late(self):
         """MEASURED 2026-08-10, eight-card batch: mono-green Craterhoof came back with magenta
@@ -269,6 +358,10 @@ class CreativeFullBriefTests(SimpleTestCase):
         green = prompts.creative_full(GREEN)
         self.assertIn("no purple, violet, magenta or lilac", green)
         self.assertLess(green.index("no purple, violet"), green.index("ABSOLUTE REQUIREMENT"))
+        # And it stays there when anything new is appended to the ban. It was inserted by
+        # counting back from the end and silently jumped the writing ban the day a rune sentence
+        # was added, which is why it is now located by searching for the ban itself.
+        self.assertLess(green.index("no purple, violet"), green.index("RUNES ESPECIALLY"))
 
     def test_a_black_card_is_not_told_to_avoid_purple(self):
         """Purple reads as black mana, so on a black card it is correct rather than a defect."""

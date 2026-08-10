@@ -11,60 +11,315 @@ purple-tinted mono-green card misstates its own cost.
 
 COLOURS = {"W": "white", "U": "blue", "B": "black", "R": "red", "G": "green"}
 
-# A style label expands into the attributes that produce the look. MEASURED 2026-08-10 (bd
-# mtg-8x6): a bare label gives a generic treatment, while the goblin brief the client approved
-# named its medium, linework, palette and quality bar as separate attributes and landed the
-# look first try. Six entries here because six are what the resample needs; the other 42 are a
-# row each when we get to them, which is all BUILD-SPEC §10 ever claimed they were.
+# Longest rules text that may be offered the narrow side-panel layout. Above this a column has to
+# wrap so hard that the shared type size drops below what reads across a table. See the comment
+# where it is used.
+FLOAT_MAX_CHARS = 110
+
+# The reference site's own 48 styles, keyed by the exact value its API sends (`art_style` in
+# POST /api/ai-proxies/generate/), so the frontend can pass a value straight through. Labels are
+# accepted too — see `_style_text`.
 #
-# A label that is not in this table is passed through verbatim — that is also exactly what the
-# "Custom Art Style" free-text field needs, so the fallback is a feature, not a gap.
+# EVERY row leads with a MEDIUM and its mark-making, and that is measured, not taste (bd mtg-8x6).
+# A bare label gives a generic treatment: the first "Neon Noir" row listed only light and mood —
+# neon rim light, wet surfaces, haze — and Counterspell came back a photoreal cinematic render,
+# which is the exact complaint the client made about the first sample batch. With no medium named
+# the model defaults to photography. A row that names medium, linework, palette and finish landed
+# the client-approved goblin look first try.
+#
+# The `artists` rows describe what the work LOOKS like rather than leaning on the name alone.
+# That is better prompting by the same rule — attributes beat labels — and it also means the row
+# still works if a name is ever a problem to ship.
 STYLES = {
-    "Rick and Morty": (
-        "Rick and Morty cartoon — flat bold cel colour, confident uneven black outlines, "
-        "rubber-limbed exaggerated anatomy, wide bulging expressive eyes, acid-bright greens "
-        "and cyans, grimy sci-fi clutter behind the subject"
-    ),
-    "Comic Book": (
-        "hand-inked comic book illustration — heavy tapered brush inking, dense cross-hatching "
-        "in the shadows, saturated flat colour laid over the ink, halftone dot texture, "
-        "high-contrast dramatic lighting, collectible card artwork quality"
-    ),
-    "Adventure Time": (
-        "Adventure Time cartoon — simple rounded shapes, thin even outlines, flat pastel-bright "
-        "colour with no rendering, tiny dot eyes, soft noodly limbs, cheerful storybook "
-        "landscape behind the subject"
-    ),
-    "Graffiti": (
-        "spray-paint graffiti art — thick black outlines with a bright keyline, aerosol "
-        "gradients and overspray, wildstyle energy, drips and splatter, saturated clashing "
-        "fluorescents against a concrete wall"
-    ),
-    # MEASURED 2026-08-10: the first version of this row listed only light and mood — neon rim
-    # light, wet surfaces, haze — and Counterspell came back a photoreal cinematic render, which
-    # is the exact complaint the client made about the first sample batch. With no medium named
-    # the model defaults to photography. Every row here leads with a medium and its linework.
-    "Neon Noir": (
-        "neon noir graphic-novel illustration — inked linework with heavy black spotting and "
-        "flat screen-printed colour, near-black scene cut by luminous neon rim light, wet "
-        "reflective surfaces, one glowing colour doing all the lighting"
-    ),
-    "Anime": (
-        "anime illustration — clean confident linework, cel shading with hard-edged shadow "
-        "shapes, large expressive eyes, saturated colour, dramatic speed lines and bloom, "
-        "detailed painted background"
-    ),
-    "Fantasy Realistic": (
+    # classic
+    "fantasy_realistic": (
         "fully rendered digital fantasy painting — volumetric form with specular highlights and "
         "subsurface glow, painterly brushwork, no visible outlines, physically plausible "
         "materials, deep atmospheric background"
     ),
-    "Dark Fantasy": (
+    "oil_painting": (
+        "traditional oil painting on canvas — visible loaded brushwork and impasto ridges, warm "
+        "glazed shadows, canvas tooth showing through thin passages, old-master chiaroscuro, "
+        "muted earth palette lifted by one saturated accent"
+    ),
+    "watercolor": (
+        "watercolour painting on cold-press paper — transparent washes with hard blooming edges, "
+        "pigment granulating in the valleys of the paper, white of the page left as the "
+        "highlights, soft wet-in-wet bleeds, delicate and luminous"
+    ),
+    "digital_art": (
+        "polished digital illustration — clean airbrushed rendering, crisp edge control, strong "
+        "rim lighting, subtle chromatic aberration and bloom, saturated contemporary palette, "
+        "concept-art finish"
+    ),
+    "sketch": (
+        "graphite pencil sketch on toned paper — confident construction lines left visible, "
+        "hatched and smudged shading, white chalk highlights, unfinished edges fading into the "
+        "paper, drawn rather than painted"
+    ),
+    "ink_drawing": (
+        "pen and ink drawing — fine nib linework, dense cross-hatching and stippling carrying all "
+        "the shading, pure black on cream paper with at most one spot colour, engraved-plate "
+        "precision"
+    ),
+    "vintage_mtg": (
+        "1990s fantasy trading-card painting — traditional acrylic and gouache on board, slightly "
+        "muted printed colour, soft airbrushed gradients, painterly but tightly rendered, the "
+        "look of early collectible card art scanned from the original board"
+    ),
+    # animated
+    "anime": (
+        "anime illustration — clean confident linework, cel shading with hard-edged shadow "
+        "shapes, large expressive eyes, saturated colour, dramatic speed lines and bloom, "
+        "detailed painted background"
+    ),
+    "studio_ghibli": (
+        "hand-painted animation background in the Ghibli tradition — soft gouache skies, lush "
+        "layered foliage, gentle naturalistic light, understated character linework, warm "
+        "nostalgic palette, quiet and unhurried"
+    ),
+    "disney": (
+        "classic hand-drawn animation cel — smooth tapering ink outlines, flat bright cel colour "
+        "with simple shadow shapes, rounded appealing shapes and squash-and-stretch anatomy, "
+        "painted storybook background"
+    ),
+    "pixar": (
+        "stylised 3D animated render — soft global illumination and bounce light, subsurface "
+        "scattering in skin, rounded exaggerated proportions with large eyes, glossy tactile "
+        "materials, warm cinematic key light"
+    ),
+    "rick_and_morty": (
+        "Rick and Morty cartoon — flat bold cel colour, confident uneven black outlines, "
+        "rubber-limbed exaggerated anatomy, wide bulging expressive eyes, acid-bright greens "
+        "and cyans, grimy sci-fi clutter behind the subject"
+    ),
+    "adventure_time": (
+        "Adventure Time cartoon — simple rounded shapes, thin even outlines, flat pastel-bright "
+        "colour with no rendering, tiny dot eyes, soft noodly limbs, cheerful storybook "
+        "landscape behind the subject"
+    ),
+    "comic_book": (
+        "hand-inked comic book illustration — heavy tapered brush inking, dense cross-hatching "
+        "in the shadows, saturated flat colour laid over the ink, halftone dot texture, "
+        "high-contrast dramatic lighting, collectible card artwork quality"
+    ),
+    "manga": (
+        "black and white manga illustration — sharp varied-weight ink linework, screentone dots "
+        "and gradients doing all the shading, dramatic speed lines and focus lines, high "
+        "contrast with pure blacks, at most a single spot colour"
+    ),
+    # modern
+    "cyberpunk": (
+        "cyberpunk digital illustration — hard-edged rendering under saturated magenta and cyan "
+        "neon, rain-slick reflective surfaces, holographic signage and volumetric haze, dense "
+        "industrial detail, near-black shadows cut by luminous accents"
+    ),
+    "vaporwave": (
+        "vaporwave digital collage — flat pastel pink and cyan gradients, chrome and glass "
+        "surfaces, grid horizons and Roman-bust statuary, VHS scanlines and chromatic offset, "
+        "deliberately artificial and dreamlike"
+    ),
+    "synthwave": (
+        "synthwave illustration — airbrushed chrome and neon outline art, magenta-to-cyan "
+        "gradient sky, glowing perspective grid, sun with horizontal slats, heavy bloom and lens "
+        "flare, retro-futurist eighties poster finish"
+    ),
+    "pixel_art": (
+        "pixel art sprite — a strictly limited palette, hard aliased pixel edges with no "
+        "antialiasing, deliberate dithering for gradients, chunky readable silhouette, drawn on "
+        "an obvious pixel grid like a 16-bit game"
+    ),
+    "low_poly": (
+        "low-poly 3D render — visible flat triangular facets, faceted flat shading with hard "
+        "value steps between planes, simple geometric forms, clean gradient background, no "
+        "texture detail"
+    ),
+    "neon_noir": (
+        "neon noir graphic-novel illustration — inked linework with heavy black spotting and "
+        "flat screen-printed colour, near-black scene cut by luminous neon rim light, wet "
+        "reflective surfaces, one glowing colour doing all the lighting"
+    ),
+    # artistic
+    "impressionist": (
+        "impressionist oil painting — broken dabs of unmixed colour laid side by side, visible "
+        "directional brushstrokes, no hard outlines, colour in the shadows rather than grey, "
+        "bright natural daylight, form dissolving at the edges"
+    ),
+    "art_nouveau": (
+        "art nouveau decorative panel — flowing whiplash linework, flat ornamental colour with "
+        "gold leaf, stylised botanical borders and halo motifs, muted jewel palette, poster "
+        "lithograph finish"
+    ),
+    "art_deco": (
+        "art deco poster illustration — bold geometric stylisation, symmetrical stepped forms, "
+        "flat blocked colour with metallic gold and black, strong verticals and sunburst motifs, "
+        "airbrushed machine-age elegance"
+    ),
+    "surrealism": (
+        "surrealist oil painting — meticulous realist rendering of impossible things, dreamlike "
+        "juxtaposition and impossible scale, long raking light and deep empty space, smooth "
+        "invisible brushwork, unsettling calm"
+    ),
+    "expressionism": (
+        "expressionist painting — violent visible brushwork and distorted anatomy, arbitrary "
+        "emotional colour rather than natural colour, heavy outlines, raw texture, unsettled and "
+        "intense"
+    ),
+    "baroque": (
+        "baroque oil painting — extreme chiaroscuro with a single dramatic light source, deep "
+        "shadow swallowing most of the frame, rich crimson and gold, dynamic diagonal "
+        "composition, heavy fabric and gleaming metal, old-master varnish"
+    ),
+    # dark
+    "dark_fantasy": (
         "fully rendered dark fantasy painting — heavy chiaroscuro with light carved out of near "
         "black, volumetric form, glowing molten and ember accents, painterly brushwork, grim "
         "atmospheric depth"
     ),
+    "gothic": (
+        "gothic painting — cold moonlit palette of slate, bone and deep violet-black, ornate "
+        "stone tracery and wrought iron, mist and guttering candlelight, tall oppressive "
+        "verticals, painterly and funereal"
+    ),
+    "lovecraftian": (
+        "cosmic horror illustration — sickly green and bruised violet against black, impossible "
+        "non-euclidean geometry, writhing tentacular mass half-hidden in fog, fine ink detail "
+        "under painted glazes, a sense of scale that dwarfs the viewer"
+    ),
+    "grimdark": (
+        "grimdark painted illustration — desaturated mud, rust and ash, brutal battered armour "
+        "and industrial gothic ornament, harsh overcast light with hard specular hits, blood and "
+        "smoke, heavy impasto texture, no beauty and no relief"
+    ),
+    "body_horror": (
+        "body horror painting — wet organic detail, fused bone and flesh and metal, distended "
+        "asymmetric anatomy, clammy pallid skin under cold light, meticulous realist rendering "
+        "that makes the wrongness legible"
+    ),
+    # light
+    "ethereal": (
+        "ethereal luminous painting — soft diffuse light with no hard shadows, translucent "
+        "layered veils and drifting motes, pale opalescent palette, edges dissolving into glow, "
+        "weightless and serene"
+    ),
+    "celestial": (
+        "celestial illustration — deep indigo star-field with nebula colour, gold constellation "
+        "linework and astrolabe geometry, radiant haloed light, polished and reverent, cosmic "
+        "scale behind an intimate subject"
+    ),
+    "pastel_fantasy": (
+        "pastel fantasy illustration — soft chalk-pastel colour in mint, rose and lavender, "
+        "gentle gradients with no harsh contrast, rounded friendly shapes, light airy background, "
+        "storybook warmth"
+    ),
+    "kawaii": (
+        "kawaii illustration — thick soft outlines, flat candy-bright colour, oversized head and "
+        "huge glossy eyes, tiny simplified limbs, blush marks and sparkle accents, cheerful and "
+        "rounded with no sharp edges"
+    ),
+    "fairy_tale": (
+        "golden-age fairy-tale book illustration — fine pen linework under delicate watercolour "
+        "washes, decorative borders, warm amber and moss palette, gnarled storybook forest, "
+        "printed-plate texture"
+    ),
+    # artists
+    "mtg_seb_mckinnon": (
+        "melancholic ink-and-wash fantasy painting — heavy black silhouettes against pale washed "
+        "ground, scratchy expressive linework, muted grey-green and dried-blood red, spectral "
+        "elongated figures, funereal romantic atmosphere"
+    ),
+    "mtg_rebecca_guay": (
+        "pre-Raphaelite watercolour and gouache fantasy painting — flowing decorative linework, "
+        "soft luminous washes over gold-leaf ornament, willowy graceful figures, tapestry-like "
+        "flattened depth, warm amber and sage palette"
+    ),
+    "mtg_john_avon": (
+        "luminous fantasy landscape painting — vast atmospheric vista with tiny human scale, "
+        "airbrushed gradient skies at dawn or dusk, floating islands and impossible geology, "
+        "jewel-bright saturated colour, serene and expansive"
+    ),
+    "alphonse_mucha": (
+        "art nouveau lithograph poster — flowing organic linework, ornamental circular halo "
+        "behind the subject, flat muted pastel colour with gold, decorative botanical framing, "
+        "printed-poster texture"
+    ),
+    "hr_giger": (
+        "biomechanical airbrush painting — fused bone, sinew and machined metal in monochrome "
+        "grey-green, ribbed tubular structures, glistening wet surfaces, obsessive fine "
+        "airbrushed gradients, cold and claustrophobic"
+    ),
+    "moebius": (
+        "clear-line bande dessinée illustration — even-weight ink outlines with no hatching, flat "
+        "unshaded colour in unexpected pastel combinations, vast serene desert vistas, precise "
+        "delicate detail, dreamlike and weightless"
+    ),
+    # other
+    "stained_glass": (
+        "stained glass window — flat jewel-bright panes of pure colour separated by heavy black "
+        "leading, simplified iconic shapes, radiant backlight blowing through the glass, stone "
+        "tracery border, no gradients"
+    ),
+    "paper_cut": (
+        "layered paper-cut diorama — flat shapes cut from coloured paper stacked in receding "
+        "planes, crisp scissor edges with visible paper thickness and soft drop shadows between "
+        "layers, limited palette, tactile and handmade"
+    ),
+    "graffiti": (
+        "spray-paint graffiti art — thick black outlines with a bright keyline, aerosol "
+        "gradients and overspray, wildstyle energy, drips and splatter, saturated clashing "
+        "fluorescents against a concrete wall"
+    ),
+    "propaganda_poster": (
+        "mid-century propaganda poster — bold flat blocked colour in red, cream and black, heavy "
+        "stencil-like shapes, low heroic angle on the subject, screen-printed grain and "
+        "misregistration, stark graphic simplification"
+    ),
+    "tarot_card": (
+        "medieval tarot card illustration — flat symbolic figures with black outlines, limited "
+        "palette of ochre, madder red and slate blue, gold ornament and celestial symbols, "
+        "hand-printed woodblock texture, rigidly symmetrical"
+    ),
 }
+
+# Their label for each key, so a frontend can send either form. Built from the same extraction as
+# STYLES (their bundle groups these as classic / animated / modern / artistic / dark / light /
+# artists / other, which is presentation only and does not change the brief).
+STYLE_LABELS = {
+    "fantasy_realistic": "Fantasy Realistic", "oil_painting": "Oil Painting",
+    "watercolor": "Watercolor", "digital_art": "Digital Art", "sketch": "Sketch",
+    "ink_drawing": "Ink Drawing", "vintage_mtg": "Vintage MTG", "anime": "Anime",
+    "studio_ghibli": "Studio Ghibli", "disney": "Disney", "pixar": "Pixar",
+    "rick_and_morty": "Rick and Morty", "adventure_time": "Adventure Time",
+    "comic_book": "Comic Book", "manga": "Manga", "cyberpunk": "Cyberpunk",
+    "vaporwave": "Vaporwave", "synthwave": "Synthwave", "pixel_art": "Pixel Art",
+    "low_poly": "Low Poly", "neon_noir": "Neon Noir", "impressionist": "Impressionist",
+    "art_nouveau": "Art Nouveau", "art_deco": "Art Deco", "surrealism": "Surrealism",
+    "expressionism": "Expressionism", "baroque": "Baroque", "dark_fantasy": "Dark Fantasy",
+    "gothic": "Gothic", "lovecraftian": "Lovecraftian", "grimdark": "Grimdark",
+    "body_horror": "Body Horror", "ethereal": "Ethereal", "celestial": "Celestial",
+    "pastel_fantasy": "Pastel Fantasy", "kawaii": "Kawaii", "fairy_tale": "Fairy Tale",
+    "mtg_seb_mckinnon": "MTG: Seb McKinnon", "mtg_rebecca_guay": "MTG: Rebecca Guay",
+    "mtg_john_avon": "MTG: John Avon", "alphonse_mucha": "Alphonse Mucha",
+    "hr_giger": "H.R. Giger", "moebius": "Moebius", "stained_glass": "Stained Glass",
+    "paper_cut": "Paper Cut", "graffiti": "Graffiti",
+    "propaganda_poster": "Propaganda Poster", "tarot_card": "Tarot Card",
+}
+_BY_LABEL = {label.lower(): key for key, label in STYLE_LABELS.items()}
+
+
+def _style_text(style):
+    """A style key, a style label, or free text -> the attributes to paint from.
+
+    Anything unrecognised passes through verbatim, which is exactly what the "Custom Art Style"
+    free-text field needs, so the fallback is a feature rather than a gap.
+    """
+    if not style:
+        return None
+    key = str(style).strip()
+    if key in STYLES:
+        return STYLES[key]
+    return STYLES.get(_BY_LABEL.get(key.lower(), ""), key)
+
 
 # Applied to EVERY brief regardless of style. MEASURED 2026-08-10 against the reference site's
 # own output (scratchpad compare_art.jpg, cards pulled from tcggenerator.com/explore at
@@ -179,15 +434,26 @@ def _palette(color_identity, strict=False):
         f"This card's colour identity is {names}. The {names} belongs to the LIGHT — glows, "
         f"flames, energy, rim light, the hot spots the eye goes to. Surfaces and environment "
         "keep their own natural, largely neutral colour: stone stays grey, steel stays steel, "
-        "bone stays bone, smoke stays grey. Do not tint the whole picture one hue and do not "
-        f"drain it to monochrome — the {names} must read as the brightest thing in a mostly "
-        "neutral scene, which is what makes it read hot. No other mana colour may dominate, "
-        "and purple in particular must not appear unless the card is black, because purple "
-        "reads as black mana."
+        "bone stays bone, smoke stays grey. "
+        # MEASURED 2026-08-11: this paragraph named only NEUTRAL things that keep their colour —
+        # stone, steel, bone, smoke — so nothing in it told the model that a subject with a
+        # colour of its own may keep it. Mono-red Raphael came back a red turtle again, shell and
+        # all, on a card whose whole point is that he is green. The reference site's own Raphael
+        # is green on the same red card, so their brief evidently permits it and ours did not.
+        "THE SUBJECT KEEPS ITS OWN COLOUR even when that colour is not the card's: a green "
+        f"turtle on a {names} card stays green, a blue dragon stays blue, a white robe stays "
+        f"white. The {names} is the light falling ON the subject and the world around it, never "
+        "paint applied to the subject itself. "
+        f"Do not tint the whole picture one hue and do not drain it to monochrome — the {names} "
+        "must read as the brightest thing in a mostly neutral scene, which is what makes it read "
+        "hot. No other mana colour may dominate, and purple in particular must not appear unless "
+        "the card is black, because purple reads as black mana."
     )
 
 
-def creative_full(face, style=None, reference=True, licensed=False, direction=None, palette=None):
+def creative_full(
+    face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None
+):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
     This is the inversion of Art Only. There, painted furniture is the defect `FORBIDDEN` exists
@@ -269,13 +535,18 @@ def creative_full(face, style=None, reference=True, licensed=False, direction=No
     if style:
         lines += [
             "",
-            f"Art style: {STYLES.get(style, style)}. This governs the whole picture — the "
+            f"Art style: {_style_text(style)}. This governs the whole picture — the "
             "furniture as much as the art.",
         ]
     if direction:
         lines += ["", f"Composition: {direction}."]
     if palette:
         lines += ["", f"Colour treatment: {palette}, within the colour identity above."]
+    if notes:
+        # `custom_art_notes` in their payload — the user's own words, placed after the style so it
+        # refines rather than replaces it, and before the furniture so it cannot argue with the
+        # surfaces. Passed verbatim: it is the one field where second-guessing the user is wrong.
+        lines += ["", f"Also: {notes}."]
 
     # Described as SHAPES, never as fields. "Title banner" and "plaque for power/toughness" are
     # invitations: a banner carries a title, so the model wrote one. A ledge is just a ledge.
@@ -294,11 +565,31 @@ def creative_full(face, style=None, reference=True, licensed=False, direction=No
         "a NARROW horizontal strip lower down, about 1/16th of the card's height, sitting "
         "directly above the broad pale strip below it. Do not omit this piece",
     ]
-    surfaces.append(
+    band = (
         "ONE broad pale strip across the lower third, tall enough to hold every line of text "
         "comfortably with a margin. This is the single most important surface on the card: it "
         "must not be cramped, and nothing else may crowd it"
     )
+    # The reference site produces a narrow right-hand rules panel on about 2 of every 10 cards
+    # (measured on the ten Tannuks), with the art filling the space beside it. It is the best-
+    # looking layout they have, and it is also the one that costs the most type size: half the
+    # measure means roughly twice the lines, and a card whose text will not fit at a readable
+    # size is a regeneration, which is a credit.
+    #
+    # So it is offered rather than left to emerge, and only where the arithmetic survives it.
+    # Their brief evidently just permits it; ours permits it only for cards short enough that a
+    # column still reads. Sol Ring (16 chars), Counterspell (21) and Lightning Bolt (44) are
+    # comfortable; Terror of the Peaks (210) and Atraxa (200) are not, and those are exactly the
+    # cards that came back with unreadable type when the layout was forced.
+    if sum(len(paragraph) for paragraph in abilities) <= FLOAT_MAX_CHARS:
+        surfaces.append(
+            band + ". This card's text is short, so that strip may instead be a TALL NARROW "
+            "panel down the left or the right, about a third of the card's width, with the "
+            "artwork filling the space beside it — whichever of the two suits the composition. "
+            "Either way it is one panel, pale, with straight level top and bottom edges"
+        )
+    else:
+        surfaces.append(band)
     if face.get("power") is not None:
         surfaces.append(
             "a small shield-shaped boss overlapping the bottom-right corner of the lowest strip"
@@ -426,12 +717,23 @@ def creative_full(face, style=None, reference=True, licensed=False, direction=No
         # decoration a model reaches for — Twinflame Tyrant on their own site has painted fake
         # runes sitting beside its real composited rules text.
         "ABSOLUTE REQUIREMENT, overriding everything above: there is NO WRITING ANYWHERE ON THIS "
-        "IMAGE — not on the raised surfaces and not on the edge material. Every raised surface "
-        "is bare stone, bare wood, bare metal — blank. No letters, no words, no names, no "
-        "titles, no numbers, no runes, no glyphs, no decorative script, no fake writing, no "
-        "watermark, no emblem, no mana symbols, no set symbol. If you are tempted to label a "
-        "surface or carve script into the edge, leave it empty instead. Real text is printed "
-        "onto these surfaces afterwards and anything you paint on them will collide with it.",
+        "IMAGE — not on the raised surfaces, not on the edge material, and not in the gaps "
+        "between them. Every raised surface is bare stone, bare wood, bare metal — blank. No "
+        "letters, no words, no names, no titles, no numbers, no glyphs, no decorative script, "
+        "no fake writing, no watermark, no emblem, no mana symbols, no set symbol. If you are "
+        "tempted to label a surface or carve script into the edge, leave it empty instead. Real "
+        "text is printed onto these surfaces afterwards and anything you paint on them will "
+        "collide with it.",
+        # MEASURED 2026-08-11 on Raphael: a band of carved rune-like marks came back in the gap
+        # between the type plate and the rules panel — a region the ban above named as surfaces
+        # and edge, and therefore did not cover. Runes are the recurring form of this failure
+        # rather than one item in a list of twelve, and the reference site has it too: their
+        # Twinflame Tyrant carries painted fake runes right beside its real composited text. So
+        # it gets its own sentence, after the list, where nothing follows to outrank it.
+        "RUNES ESPECIALLY. A row or band of carved rune-like marks anywhere on this card is a "
+        "failed image, and it is failed even when the marks are meant as ornament rather than "
+        "as something readable. Where you would carve runes, carve nothing: leave the material "
+        "plain, or use a shape that is obviously not writing — a notch, a rivet, a crack, a leaf.",
     ]
     # MEASURED 2026-08-10, eight-card batch: mono-green Craterhoof came back with magenta crystal
     # growths through the art. The ban was already in `_palette` near the top of the brief, and
@@ -444,8 +746,16 @@ def creative_full(face, style=None, reference=True, licensed=False, direction=No
     # the two: painted text collides with the text we composite and makes the card unusable,
     # while a purple tint misstates the colour identity of a card that still works.
     if "B" not in (face.get("color_identity") or []):
+        # Located by looking for the ban rather than counting back from the end: it was inserted
+        # at len(lines) - 1 and silently moved AFTER the writing ban the day a rune sentence was
+        # appended, which is the exact position this comment says it must never take.
+        writing_ban = next(
+            index
+            for index, line in enumerate(lines)
+            if line.startswith("ABSOLUTE REQUIREMENT")
+        )
         lines.insert(
-            len(lines) - 1,
+            writing_ban,
             "AND: no purple, violet, magenta or lilac anywhere in this image — not in the art, "
             "not in the light, not in the edge material, not in any surface. Purple reads as "
             "black mana and this card is not black.",
@@ -500,7 +810,7 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
     if style:
         lines += [
             "",
-            f"Art style: {STYLES.get(style, style)}. This governs the whole picture — the "
+            f"Art style: {_style_text(style)}. This governs the whole picture — the "
             "world it is set in, the light, the palette and the finish.",
         ]
     if direction:
