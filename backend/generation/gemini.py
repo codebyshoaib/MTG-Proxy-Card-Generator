@@ -31,6 +31,22 @@ def client():
 class NoImage(RuntimeError):
     """The call succeeded and produced no image. Named so a retry loop can catch just this."""
 
+    def __init__(self, message, finish_reason=None):
+        super().__init__(message)
+        self.finish_reason = finish_reason
+
+    @property
+    def refused(self):
+        """True when the model declined this prompt rather than merely missing.
+
+        The distinction decides whether retrying is worth a credit. An empty part list is the
+        transient miss measured once in 24 generations and is worth one retry; a refusal repeats
+        for that prompt forever, so the only useful response is a different prompt.
+        """
+        return str(self.finish_reason or "").upper().endswith(
+            ("PROHIBITED_CONTENT", "SAFETY", "IMAGE_SAFETY", "BLOCKLIST", "RECITATION")
+        )
+
 
 def generate(prompt, reference=None):
     """PNG bytes for one prompt.
@@ -64,8 +80,9 @@ def generate(prompt, reference=None):
     for part in parts:
         if part.inline_data:
             return part.inline_data.data
+    finish_reason = getattr(candidate, "finish_reason", None)
     raise NoImage(
-        f"{MODEL} returned no image "
-        f"(finish_reason={getattr(candidate, 'finish_reason', None)}). "
-        f"Model said: {getattr(response, 'text', None)!r}"
+        f"{MODEL} returned no image (finish_reason={finish_reason}). "
+        f"Model said: {getattr(response, 'text', None)!r}",
+        finish_reason=finish_reason,
     )
