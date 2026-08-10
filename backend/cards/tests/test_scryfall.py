@@ -299,6 +299,10 @@ class CrossoverArtTests(TestCase):
         face = scryfall.faces(card)[0]
         self.assertFalse(face["is_crossover"])
         # No network: a non-crossover resolves to its own art and is not licensed-only.
-        self.assertEqual(
-            scryfall.art_reference(face), ("https://example.test/counterspell.jpg", False)
-        )
+        original = scryfall.art_reference(face)
+        self.assertEqual(original.art_crop, "https://example.test/counterspell.jpg")
+        self.assertFalse(original.licensed)
+        # Its own flavour too. The field exists so that a CROSSOVER's flavour comes from the same
+        # printing its art does — with it taken from resolve() instead, Lightning Bolt printed
+        # Christopher Rush's Alpha art under Marvel flavour text, one card wearing two printings.
+        self.assertEqual(original.flavor_text, "")

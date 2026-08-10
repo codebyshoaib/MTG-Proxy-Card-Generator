@@ -17,6 +17,7 @@ Two rules here are correctness, not style:
 
 import re
 import time
+from typing import NamedTuple
 
 import requests
 from django.db.models import Q
@@ -224,6 +225,18 @@ def _faces(data):
     return [_face(data, None, "SINGLE")]
 
 
+class ArtReference(NamedTuple):
+    """What the original printing of a card gives us.
+
+    A NamedTuple rather than a bare tuple because `flavor_text` was added after two callers were
+    already unpacking two values, and a silent third element is how a URL ends up in a bool.
+    """
+
+    art_crop: str
+    licensed: bool
+    flavor_text: str
+
+
 def art_reference(face):
     """(art to show the model, whether the card exists ONLY as a licensed crossover).
 
@@ -247,7 +260,7 @@ def art_reference(face):
     One request, and only for the cards that need it — the batch resolve is untouched.
     """
     if not face["is_crossover"]:
-        return face["art_crop"], False
+        return ArtReference(face["art_crop"], False, face.get("flavor_text") or "")
 
     time.sleep(DELAY)
     response = requests.get(
@@ -264,13 +277,21 @@ def art_reference(face):
     # 404 is Scryfall's empty result: the card exists ONLY as a crossover, so there is no
     # earlier art to fall back to and the name is a licensed character's.
     if response.status_code == 404:
-        return None, True
+        return ArtReference(None, True, "")
     response.raise_for_status()
 
     for candidate in _faces(response.json()["data"][0]):
         if candidate["face_position"] == face["face_position"]:
-            return candidate["art_crop"], False
-    return None, False
+            # MEASURED 2026-08-11: the flavour text has to come from the SAME printing as the
+            # art. `resolve()` answers a bare name with the newest printing, so with
+            # `include_flavor_text` on, Lightning Bolt was printing Christopher Rush's Alpha art
+            # under flavour text reading "I am the god of thunder... speaks The Mighty Thor!" —
+            # one card wearing two printings. A crossover is a skin, and the flavour text is part
+            # of the skin exactly as the art is.
+            return ArtReference(
+                candidate["art_crop"], False, candidate.get("flavor_text") or ""
+            )
+    return ArtReference(None, False, "")
 
 
 def resolve_decklist(text):
