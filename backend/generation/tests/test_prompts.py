@@ -178,9 +178,107 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("the art style wins", brief)
         self.assertIn("not its setting", brief)
 
+    def test_the_reference_gives_the_character_and_not_the_composition(self):
+        """CLIENT 2026-08-13: "it is a little too similar to the original art on one of them, we
+        usually dont want them to come out looking like the original card, just elements to be
+        there." Our Raphael restaged the official card exactly — same turtle, same bowling-ball
+        dumbbells, same gym — because the brief asked for "what is in it, and what they are doing".
+
+        Both halves are load-bearing. Dropping the identity is the opposite failure and it was the
+        client's FIRST complaint about the batch, so the brief has to take the character and refuse
+        the staging, in that order."""
+        brief = prompts.art_only(GREEN)
+        self.assertIn("ONLY WHO OR WHAT the subject is", brief)
+        self.assertIn("Do not restage the picture", brief)
+        self.assertIn("the same character and not the same picture", brief)
+        # And the same paragraph in both modes: one answer to the question, not two that drift.
+        self.assertIn(prompts.REFERENCE, prompts.creative_full(GREEN))
+
 
 class CreativeFullBriefTests(SimpleTestCase):
     """Creative Full inverts Art Only: furniture is the deliverable, lettering is the defect."""
+
+    def test_borderless_is_the_default_and_framed_is_still_reachable(self):
+        """CLIENT 2026-08-13: "the white borders on the first card are not ideal ... id be okay
+        with black borders or black going around, (what we use to do is type into the custom art
+        notes 'borderless' and try to get no black or white borders, if you can do that it would
+        be by far the best!)" — so borderless is the default, and the framed edge stays because
+        ~20 of the reference site's own 24 gallery cards do it and the client accepted it too."""
+        self.assertIn("THE CARD IS FULL BLEED", prompts.creative_full(GREEN))
+        self.assertIn("THE CARD'S EDGE", prompts.creative_full(GREEN, borderless=False))
+
+    def test_full_bleed_is_asked_for_positively_before_it_is_banned(self):
+        """bd mtg-z12's finding cuts both ways: naming an object summons it, and "no border" is a
+        sentence with a border in it. So the ask is what to paint — scene to the trim on all four
+        sides — and the ban follows it rather than standing alone."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("The picture runs off all four edges of the image", brief)
+        self.assertIn("All four corners are painted scene", brief)
+        self.assertLess(
+            brief.index("The picture runs off all four edges"),
+            brief.index("Nothing surrounds the picture"),
+        )
+        self.assertIn("no white or black edge anywhere", brief)
+        # MEASURED 2026-08-13, first generation under this brief: it obeyed the full bleed and
+        # still built a card, with a riveted steel band across the top tenth and the picture inset
+        # in a rectangle below it. No border was drawn — the band and the strips MADE one.
+        self.assertIn("There is NO ART WINDOW", brief)
+        self.assertIn("no surface reaches the left or right edge", brief)
+        self.assertIn("NARROWER than the card", brief)
+        # The noun itself stays out of the brief in BOTH modes, which is what mtg-z12 measured.
+        for noun in ("border", "frame around", "mount", "inset inside", "matted"):
+            self.assertNotIn(noun, brief)
+
+    def test_borderless_plates_are_objects_in_the_scene_so_they_are_still_anchored(self):
+        """The edge material was what stopped the plates reading as pasted on: asked for with
+        nothing anchoring them they came back as three cream rectangles on every card in the batch.
+        Take the edge away and the anchor has to become the plate itself being a THING — which is
+        how the ink-sketch cards the client sent do it, every text surface a painted ribbon in the
+        same ink as the art with the art running behind it."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("OBJECT IN THE SCENE", brief)
+        self.assertIn("casts its own shadow", brief)
+        self.assertIn("crosses in FRONT of one", brief)
+        self.assertIn("ONE piece of art", brief)
+
+    def test_borderless_frees_placement_but_not_the_order_or_the_baseline(self):
+        """The client's fourth ask is "creative as to where to place the text ... make the card
+        feel like 1 piece of art". It is granted as width and position, not as rotation: the
+        compositor lays out axis-aligned lines and `check` asserts the vertical order, and their own
+        Wheel of Fortune with rules text on a painted diagonal is the least readable card in the
+        reference gallery."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("need not span the card's full width", brief)
+        self.assertIn("as long as the ORDER down the card is kept", brief)
+        self.assertIn("stay straight and level", brief)
+
+    def test_the_word_borderless_in_the_notes_turns_the_mode_on(self):
+        """The client's own workflow on the reference site is typing "borderless" into Custom Art
+        Notes, so the word arriving in `notes` has to do what the argument does — and the note is
+        still passed through verbatim as well."""
+        brief = prompts.creative_full(GREEN, notes="borderless", borderless=False)
+        self.assertIn("THE CARD IS FULL BLEED", brief)
+        self.assertNotIn("THE CARD'S EDGE", brief)
+        self.assertIn("Also: borderless.", brief)
+
+    def test_borderless_never_mentions_edge_material_it_does_not_have(self):
+        """Four sentences elsewhere in the brief hang off the edge existing — the 1/12th margin,
+        what may cover the subject, where writing is banned, where purple is banned. A brief that
+        forbids writing "on the edge material" of a card with no edge material is telling the model
+        the edge is there."""
+        brief = prompts.creative_full(GREEN)
+        self.assertNotIn("edge material", brief)
+        self.assertIn("not anywhere in the artwork", brief)  # what replaces it in the writing ban
+        self.assertIn("edge material", prompts.creative_full(GREEN, borderless=False))
+
+    def test_no_surface_above_the_top_plate_but_the_scene_may_run_above_it(self):
+        """"Nothing may be painted above the top plate" is right on a framed card and wrong on a
+        full-bleed one, where the scene has to reach the top edge — the two instructions would
+        cancel and one of them would lose."""
+        for borderless in (True, False):
+            with self.subTest(borderless=borderless):
+                brief = prompts.creative_full(GREEN, borderless=borderless)
+                self.assertIn("No surface may be painted above the top plate", brief)
 
     def test_the_surfaces_are_demanded_and_lettering_is_forbidden(self):
         brief = prompts.creative_full(GREEN, "Comic Book")
@@ -195,7 +293,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         anchoring them. bd mtg-z12 got a gallery mount from the word "border" and concluded the
         framed look was the failure — it was the noun. Naming the object brings the object, so
         the shape is asked for and the noun stays out."""
-        brief = prompts.creative_full(GREEN)
+        brief = prompts.creative_full(GREEN, borderless=False)
         self.assertIn("closes in around the scene at the card's edge", brief)
         self.assertIn("crosses in FRONT of it", brief)
         for noun in ("border", "frame around", "mount", "inset inside", "matted"):
@@ -206,7 +304,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         made the whole card read dark and muddy beside it. The emissive convention _palette
         enforces for the scene (bd mtg-roq) had never been stated for the edge, and the material
         list led with "cracked obsidian", so the model painted a dark rim."""
-        brief = prompts.creative_full(GREEN)
+        brief = prompts.creative_full(GREEN, borderless=False)
         self.assertIn("Run the card's colour through it as LIGHT", brief)
         self.assertIn("not a dark rim around a bright picture", brief)
         self.assertNotIn("cracked obsidian", brief)
@@ -216,7 +314,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         members died where the lower surfaces began, the bottom never closed, and the two bottom
         corners came back as dead black wedges. To a model painting a picture, "the card's edge"
         and "around the scene" are the same sentence."""
-        brief = prompts.creative_full(GREEN)
+        brief = prompts.creative_full(GREEN, borderless=False)
         self.assertIn("encloses the whole CARD", brief)
         self.assertIn("closes across the bottom", brief)
         self.assertIn("No corner and no edge of this card is left as empty dark space", brief)
@@ -258,7 +356,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         brief = prompts.creative_full({**GREEN, "power": "5"})
         self.assertIn("Their order down the card is fixed", brief)
         self.assertIn("TOPMOST thing on the card", brief)
-        self.assertIn("Nothing may be painted above the top plate", brief)
+        self.assertIn("No surface may be painted above the top plate", brief)
 
     def test_custom_art_notes_reach_the_brief_verbatim(self):
         """`custom_art_notes` in their generate payload. Placed after the style so it refines
@@ -266,7 +364,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         Verbatim, because it is the one field where second-guessing the user is wrong."""
         brief = prompts.creative_full(GREEN, "Anime", notes="give it six eyes and no mouth")
         self.assertIn("Also: give it six eyes and no mouth.", brief)
-        self.assertLess(brief.index("Also: give it"), brief.index("THE CARD'S EDGE"))
+        self.assertLess(brief.index("Also: give it"), brief.index("THE RAISED SURFACES"))
         self.assertGreater(brief.index("Also: give it"), brief.index("Art style:"))
         self.assertNotIn("Also:", prompts.creative_full(GREEN, "Anime"))
 

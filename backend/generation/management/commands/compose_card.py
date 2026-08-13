@@ -52,6 +52,11 @@ class Command(BaseCommand):
             help="use_original_art_reference=false: do not attach Scryfall's own art",
         )
         parser.add_argument(
+            "--framed", dest="borderless", action="store_false",
+            help="build the card's edge out of the scene instead of running the art full bleed "
+                 "(borderless is the default — client, 2026-08-13)",
+        )
+        parser.add_argument(
             "--attempts", type=int, default=2,
             help="how many times to paint before accepting a structurally faulty card "
                  "(default 2: measured, about one card in five needs a second)",
@@ -68,7 +73,7 @@ class Command(BaseCommand):
 
     def handle(
         self, card, style, out, source, boxes, direction, palette, notes, flavor,
-        use_reference, attempts, **_,
+        use_reference, attempts, borderless, **_,
     ):
         found, missing = scryfall.resolve([card])
         if missing:
@@ -89,7 +94,9 @@ class Command(BaseCommand):
                 png = (
                     source.read_bytes()
                     if source
-                    else self._paint(face, licensed, reference, style, direction, palette, notes)
+                    else self._paint(
+                        face, licensed, reference, style, direction, palette, notes, borderless
+                    )
                 )
                 if not source:
                     (out / f"{stem}-blank.png").write_bytes(png)
@@ -130,12 +137,16 @@ class Command(BaseCommand):
                 debug = card_image.copy()
                 drawer = ImageDraw.Draw(debug)
                 for key, panel in detected.items():
-                    strips = compositor._rules_panels(panel) if key == "rules" else [panel]
+                    strips = compositor._rules_panels(panel) if key in panels.LISTS else [panel]
+                    # The two fault keys are drawn too, and in red: when a card is repainted for a
+                    # spare surface or a painted set symbol, the first thing to check is whether
+                    # the detector was right about it.
+                    colour = (255, 40, 40) if key in panels.FAULTS else (255, 0, 255)
                     for index, one in enumerate(strips):
                         x0, y0, x1, y1 = compositor._box(one, debug.size)
-                        drawer.rectangle((x0, y0, x1, y1), outline=(255, 0, 255), width=6)
+                        drawer.rectangle((x0, y0, x1, y1), outline=colour, width=6)
                         label = f"{key}{index + 1}" if len(strips) > 1 else key
-                        drawer.text((x0 + 10, y0 + 10), label, fill=(255, 0, 255))
+                        drawer.text((x0 + 10, y0 + 10), label, fill=colour)
                 debug.convert("RGB").save(out / f"{stem}-boxes.png")
 
     def _prepare(self, face, use_reference):
@@ -163,7 +174,7 @@ class Command(BaseCommand):
             reference = response.content
         return face, reference, licensed
 
-    def _paint(self, face, licensed, reference, style, direction, palette, notes):
+    def _paint(self, face, licensed, reference, style, direction, palette, notes, borderless=True):
         """One image call: the card's art and its blank furniture, as PNG bytes.
 
         Tries the card's own NAME first and falls back to its game identity only once the model
@@ -180,6 +191,7 @@ class Command(BaseCommand):
                     prompts.creative_full(
                         face, style, reference=attach, licensed=False,
                         direction=direction, palette=palette, notes=notes,
+                        borderless=borderless,
                     ),
                     reference,
                 )
@@ -208,10 +220,10 @@ class Command(BaseCommand):
     def _where(self, detected):
         """Every detected surface and where it landed, for reading a batch at a glance."""
         where = []
-        for key in ("title", "type", "rules", "pt"):
+        for key in panels.KEYS + panels.FAULTS:
             panel = detected.get(key)
             if not panel:
                 continue
-            for one in compositor._rules_panels(panel) if key == "rules" else [panel]:
+            for one in compositor._rules_panels(panel) if key in panels.LISTS else [panel]:
                 where.append(f"{key} y{one[1]:.2f}-{one[3]:.2f} x{one[0]:.2f}-{one[2]:.2f}")
         return "; ".join(where) or "nothing detected"

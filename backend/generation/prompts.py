@@ -341,6 +341,29 @@ QUALITY = (
     "sketch and not an empty backdrop."
 )
 
+# How the attached official art is allowed to be used, shared by both modes so there is one
+# answer to the question rather than two that drift.
+#
+# CLIENT 2026-08-13: "it is a little too similar to the original art on one of them, we usually
+# dont want them to come out looking like the original card, just elements to be there." Our
+# Raphael reproduced the official card's composition — the same turtle lifting the same
+# bowling-ball dumbbells in the same gym — because the brief asked for exactly that: "what is in
+# it, and what they are doing". The likeness was never the problem, the RESTAGING was missing.
+#
+# So identity is taken and composition is refused, in that order and in those words. Saying only
+# "do not copy it" is the failure mode on the other side: the model drops the character too, and
+# the client's first complaint about the whole batch was cards that did not look like the subject.
+REFERENCE = (
+    "The attached image is the card's official artwork. Take from it ONLY WHO OR WHAT the "
+    "subject is — the character's identity, build, gear, and the markings and colours that make "
+    "them recognisable at a glance. Do not restage the picture: invent a NEW moment for them, "
+    "with a different pose, a different action, a different angle and a different setting from "
+    "the reference. Someone holding the two side by side must see the same character and not the "
+    "same picture. Take nothing of how it is drawn: not its palette, not its lighting, not its "
+    "period, not its level of realism, not its setting. Where the reference and the art style "
+    "disagree, the art style wins."
+)
+
 # Named individually because the model treats them as separate things: it will happily
 # obey "no text" and still paint an empty title banner. Every item here is one that a
 # generation actually produced (handover §7, bd mtg-z12, mtg-gni).
@@ -452,7 +475,8 @@ def _palette(color_identity, strict=False):
 
 
 def creative_full(
-    face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None
+    face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None,
+    borderless=True,
 ):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
@@ -479,6 +503,18 @@ def creative_full(
     on every card whatever the style — the client's "flat and pasted-on" report. Both are fixed
     below, in the brief only; the compositor needed no change, because `panel_palette` already
     derives ink from the surface it is printing on.
+
+    `borderless` drops that edge and runs the artwork off all four sides instead, with the
+    surfaces sitting in the scene as objects. It is ON by default, and that is the CLIENT's call
+    of 2026-08-13: "the white borders on the first card are not ideal ... what we use to do is
+    type into the custom art notes 'borderless' and try to get no black or white borders, if you
+    can do that it would be by far the best", and then, of a set of full-bleed ink-sketch cards,
+    "these look the best ... how the cards are reallllly borderless and creative as to where to
+    place the text and make the card feel like 1 piece of art".
+
+    The framed edge is kept rather than deleted: it is what ~20 of the reference site's own 24
+    gallery cards do, it is the measured cure for plates that read as pasted on, and it is the
+    fallback the client also accepted ("id be okay with black borders or black going around").
     """
     # MEASURED 2026-08-10: given the name and the rules text, the model paints them. Atraxa came
     # back fully lettered — its own name in the top plate, "Legendary Phyrexian Angel Horror" in
@@ -489,6 +525,10 @@ def creative_full(
     # thing the model needs in order to size the slab. You cannot paint text you were never given.
     # The attached official art carries the likeness, so nothing is lost by withholding the name.
     abilities = [p for p in (face.get("oracle_text") or "").split("\n") if p.strip()]
+    # The client's own workflow on the reference site is to type "borderless" into Custom Art
+    # Notes, so the word arriving in `notes` turns the mode on as well as the argument does. Done
+    # here rather than in the caller so every entry point — CLI, API, frontend — gets it.
+    borderless = bool(borderless) or "borderless" in (notes or "").lower()
     # ONE strip, MEASURED 2026-08-10 on a four-card batch — and this reverses the multi-strip
     # change made earlier the same day. The reference site sets one pale strip per ability and it
     # works for them; asked of our model it does not. Vampiric Tutor and Sol Ring (one ability,
@@ -526,12 +566,7 @@ def creative_full(
     lines += ["", _palette(face.get("color_identity") or [], strict=True)]
 
     if reference:
-        lines += [
-            "",
-            "The attached image is the card's official artwork. Take from it ONLY what is "
-            "depicted — who or what is in it, and what they are doing. Take nothing of how it "
-            "is drawn. Where the reference and the art style disagree, the art style wins.",
-        ]
+        lines += ["", REFERENCE]
     if style:
         lines += [
             "",
@@ -560,8 +595,14 @@ def creative_full(
     # single slab is what forced `textlayout.fit` down to 55px. bd mtg-yp3 saw a second panel and
     # filed it as variance; across their gallery it is the norm.
     surfaces = [
-        "a plate across the very top, no taller than 1/10th of the card, held at both ends by "
-        "the edge material. Do not omit this piece — every card has one",
+        "a plate across the very top, no taller than 1/10th of the card"
+        + (
+            " and NARROWER than the card — its ends stop well short of both side edges, with "
+            "painted scene either side of it and the picture running behind it"
+            if borderless
+            else ", held at both ends by the edge material"
+        )
+        + ". Do not omit this piece — every card has one",
         "a NARROW horizontal strip lower down, about 1/16th of the card's height, sitting "
         "directly above the broad pale strip below it. Do not omit this piece",
     ]
@@ -595,51 +636,133 @@ def creative_full(
             "a small shield-shaped boss overlapping the bottom-right corner of the lowest strip"
         )
     total = len(surfaces)
+    if borderless:
+        lines += [
+            "",
+            # CLIENT 2026-08-13: "the white borders on the first card are not ideal ... what we
+            # use to do is type into the custom art notes 'borderless' and try to get no black or
+            # white borders, if you can do that it would be by far the best", and of a set of
+            # full-bleed ink-sketch cards: "these look the best ... how the cards are reallllly
+            # borderless".
+            #
+            # Stated as a POSITIVE instruction with the ban second, because bd mtg-z12's finding
+            # cuts both ways: naming an object summons it, and "no border" is a sentence with a
+            # border in it. So the first sentence is what to paint — scene to the trim on all four
+            # sides — and only then what must not be there.
+            "THE CARD IS FULL BLEED, and this is the most important thing about it:",
+            "The picture runs off all four edges of the image. Whatever is at the top edge, the "
+            "bottom edge and both side edges is scene — sky, rock, smoke, water, foliage, cloth, "
+            "distance — carrying straight off the image the way a photograph does. All four "
+            "corners are painted scene too.",
+            "Nothing surrounds the picture and nothing encloses it. No rim, no band, no margin, "
+            "no outline, no strip of material, no beading and no line of any kind runs around the "
+            "outside, and there is no white or black edge anywhere. The artwork is not set inside "
+            "anything and is not a picture with a surround: it IS the card, all the way out.",
+            # MEASURED 2026-08-13, first generation under this brief: the model obeyed "full bleed"
+            # and still built a card, by painting a riveted steel band across the top tenth and
+            # insetting the picture in a rectangular window below it. That is bd mtg-9pi's "art in
+            # a box" arriving through a different door — the window has no border drawn around it,
+            # it is made by the top band plus the strips below.
+            #
+            # Two things kill it. There is no art window: the scene is the whole card. And no
+            # surface reaches the left or right edge, because a plate that runs edge to edge IS a
+            # band whatever it was asked to be, and the corners it makes are what read as a border.
+            "There is NO ART WINDOW and no inner rectangle: the scene is not a picture placed on "
+            "the card with anything above, below or beside it. It fills the card corner to corner, "
+            "and the raised surfaces lie ON it.",
+            "So no surface reaches the left or right edge of the card. Every one of them stops "
+            "short at both ends, with painted scene continuing past it on both sides — for the "
+            "plate at the top as much as for the strips below it. A surface that runs the full "
+            "width of the card makes a band across it, and a band across the card is the exact "
+            "thing this must not have.",
+            "",
+            # This is what the edge material was doing that the plates now have to do for
+            # themselves. MEASURED 2026-08-10: plates asked for with nothing anchoring them came
+            # back as three cream rectangles on every card in the batch — the client's own "flat
+            # and pasted-on" report. Without an edge to hang off, the anchor has to be that each
+            # plate is a THING IN THE SCENE, which is exactly how the ink-sketch cards the client
+            # sent do it: every one of their text surfaces is a painted ribbon or banner in the
+            # same ink as the art, with the art running behind and through it.
+            "THE RAISED SURFACES, and here each one is an OBJECT IN THE SCENE:",
+            # "SAME MATERIAL as the art" is kept word for word from the framed branch: a frame
+            # overlay on an art window scored 0/3 and read as art in a box (bd mtg-9pi), and with
+            # no edge to grow out of, this phrase is the only thing left holding that line.
+            "Each surface is a real thing in this world, made of the SAME MATERIAL as the art and "
+            "lit by this scene's light — a hanging banner, a torn ribbon of cloth or vellum, a slab of "
+            "stone, a plate of beaten metal, a length of bone, a curl of bark, a scroll with a "
+            "rod at each end. It has thickness, it catches the light along one edge, and it casts "
+            "its own shadow onto whatever is behind it.",
+            "The artwork runs behind each surface and past it on both sides, and at one or two "
+            "points something from the scene — a claw, a limb, a wingtip, a curl of smoke, a vine "
+            "— crosses in FRONT of one. That overlap is what makes the finished card read as ONE "
+            "piece of art rather than as a picture with labels laid on it.",
+            # The client's fourth ask — "creative as to where to place the text" — is only this
+            # much freedom, and no more. `cards.compositor` lays out axis-aligned lines and
+            # `generation.check` asserts the vertical order, so a diagonal ribbon or a title
+            # halfway down the card is not a bolder layout, it is a card the pipeline reports as
+            # unsound and repaints. Their own Wheel of Fortune, with rules text on a painted
+            # diagonal, is the one card in the reference gallery that is barely readable.
+            "They need not span the card's full width and need not be centred: make each one as "
+            "wide or as narrow as the composition wants, sitting where it belongs in the picture, "
+            "as long as the ORDER down the card is kept and each surface's long top and bottom "
+            "edges stay straight and level.",
+            f"Paint exactly these {total} raised surfaces and no others: "
+            + "; ".join(surfaces)
+            + ".",
+        ]
+    else:
+        lines += [
+            "",
+            # MEASURED 2026-08-10, 24 cards pulled from tcggenerator.com/explore: ~20 of them
+            # build the card's outer edge out of the scene's own material and hang the plates off
+            # it. That is the whole gap. Ours were three cream rectangles floating on a painting
+            # with nothing anchoring them, which is why every card in a batch looked like the same
+            # sticker set.
+            #
+            # bd mtg-z12 logged "a literal rectangular carved frame with a MOUNT, art inset inside
+            # it" as a failure. It was right about the word and wrong about the thing. "Border"
+            # and "frame" name an object that surrounds a picture, and the model duly supplies a
+            # gallery mount. Asked for as material closing in around the scene, the same request
+            # produces what their gallery has. So the shape is asked for and the noun is never
+            # used.
+            "THE CARD'S EDGE — this is what makes it a card and not a picture:",
+            "The world's own material closes in around the scene at the card's edge — thick at "
+            "the corners, thinner along the sides, never an even width and never a clean "
+            "rectangle. Build it from whatever this scene is made of: cracked stone, living wood "
+            "and root and vine, corroded iron and gears, bone, coral, ice.",
+            # MEASURED 2026-08-10, ours beside the reference site's own Terror of the Peaks:
+            # theirs is a hot orange ribbon of lava and ours came back near-black rock, which is
+            # what makes the whole card read dark and muddy against theirs. The emissive
+            # convention `_palette` already enforces for the scene had never been stated for the
+            # edge, and the material list led with "cracked obsidian" — a dark descriptor — so the
+            # model painted a dark rim.
+            "Run the card's colour through it as LIGHT: molten veins in the stone, sap glowing in "
+            "the wood, current in the metal, frost-fire in the ice. It is lit from within, not a "
+            "dark rim around a bright picture — after the subject it is the brightest thing on "
+            "the card, and it is where the card's colour reads from across a table.",
+            "It is grown, not laid on. The scene continues behind it, breaks through where it is "
+            "thin, and at one or two points something from the scene — a claw, a tail, a wingtip, "
+            "a curl of smoke — crosses in FRONT of it. It runs off all four edges of the image.",
+            # MEASURED 2026-08-10, first generation under this brief: the model enclosed the
+            # ARTWORK and stopped. Both side members died where the lower surfaces began, the
+            # bottom never closed, and the two bottom corners came back as dead black wedges. It
+            # encloses the card, and the surfaces are inside it — that has to be said, because
+            # "the card's edge" and "around the scene" are the same sentence to a model painting a
+            # picture.
+            "It encloses the whole CARD, not just the picture: it runs unbroken down both sides "
+            "all the way past the lower surfaces and closes across the bottom underneath them, so "
+            "all four corners are made of it. The raised surfaces sit INSIDE it and overlap it at "
+            "their ends. No corner and no edge of this card is left as empty dark space.",
+            "",
+            "THE RAISED SURFACES, built from that same material and joined to it:",
+            "They must look carved out of the world, out of the SAME MATERIAL as the art, never "
+            "like a panel laid on top of a picture. Let the art bleed past and behind them.",
+            f"Paint exactly these {total} raised surfaces and no others: "
+            + "; ".join(surfaces)
+            + ".",
+        ]
+
     lines += [
-        "",
-        # MEASURED 2026-08-10, 24 cards pulled from tcggenerator.com/explore: ~20 of them build
-        # the card's outer edge out of the scene's own material and hang the plates off it. That
-        # is the whole gap. Ours were three cream rectangles floating on a painting with nothing
-        # anchoring them, which is why every card in a batch looked like the same sticker set.
-        #
-        # bd mtg-z12 logged "a literal rectangular carved frame with a MOUNT, art inset inside
-        # it" as a failure. It was right about the word and wrong about the thing. "Border" and
-        # "frame" name an object that surrounds a picture, and the model duly supplies a gallery
-        # mount. Asked for as material closing in around the scene, the same request produces
-        # what their gallery has. So the shape is asked for and the noun is never used.
-        "THE CARD'S EDGE — this is what makes it a card and not a picture:",
-        "The world's own material closes in around the scene at the card's edge — thick at the "
-        "corners, thinner along the sides, never an even width and never a clean rectangle. "
-        "Build it from whatever this scene is made of: cracked stone, living wood and root and "
-        "vine, corroded iron and gears, bone, coral, ice.",
-        # MEASURED 2026-08-10, ours beside the reference site's own Terror of the Peaks: theirs
-        # is a hot orange ribbon of lava and ours came back near-black rock, which is what makes
-        # the whole card read dark and muddy against theirs. The emissive convention `_palette`
-        # already enforces for the scene had never been stated for the edge, and the material
-        # list led with "cracked obsidian" — a dark descriptor — so the model painted a dark rim.
-        "Run the card's colour through it as LIGHT: molten veins in the stone, sap glowing in "
-        "the wood, current in the metal, frost-fire in the ice. It is lit from within, not a "
-        "dark rim around a bright picture — after the subject it is the brightest thing on the "
-        "card, and it is where the card's colour reads from across a table.",
-        "It is grown, not laid on. The scene continues behind it, breaks through where it is "
-        "thin, and at one or two points something from the scene — a claw, a tail, a wingtip, a "
-        "curl of smoke — crosses in FRONT of it. It runs off all four edges of the image.",
-        # MEASURED 2026-08-10, first generation under this brief: the model enclosed the ARTWORK
-        # and stopped. Both side members died where the lower surfaces began, the bottom never
-        # closed, and the two bottom corners came back as dead black wedges. It encloses the
-        # card, and the surfaces are inside it — that has to be said, because "the card's edge"
-        # and "around the scene" are the same sentence to a model painting a picture.
-        "It encloses the whole CARD, not just the picture: it runs unbroken down both sides all "
-        "the way past the lower surfaces and closes across the bottom underneath them, so all "
-        "four corners are made of it. The raised surfaces sit INSIDE it and overlap it at their "
-        "ends. No corner and no edge of this card is left as empty dark space.",
-        "",
-        "THE RAISED SURFACES, built from that same material and joined to it:",
-        "They must look carved out of the world, out of the SAME MATERIAL as the art, never "
-        "like a panel laid on top of a picture. Let the art bleed past and behind them.",
-        f"Paint exactly these {total} raised surfaces and no others: "
-        + "; ".join(surfaces)
-        + ".",
         # MEASURED 2026-08-10, the generation after "the surfaces sit INSIDE it" was added: the
         # model read that as permission and painted a ROW OF THREE extra glowing slabs between
         # the picture and the type strip. They also stole the slab's height, so the rules text
@@ -654,13 +777,28 @@ def creative_full(
         # Ours listed the surfaces without ever saying that order was a requirement, and two
         # consecutive generations put the name plate down in the lower third.
         "Their order down the card is fixed and is not a suggestion: the top plate is the "
-        "TOPMOST thing on the card and touches its upper edge; the narrow strip is below the "
-        "picture; the broad pale strip is below the narrow strip; the shield, if there is one, "
-        "is at the bottom right. Nothing may be painted above the top plate.",
+        "TOPMOST thing on the card and "
+        # In borderless mode the scene itself runs above and behind the plate, so "touches the
+        # upper edge" would fight the full bleed — and the ink-sketch cards the client sent all
+        # float their banner just inside the top with art visible above it.
+        + ("sits inside its top tenth" if borderless else "touches its upper edge")
+        + "; the narrow strip is below the picture; the broad pale strip is below the narrow "
+        "strip; the shield, if there is one, is at the bottom right. No surface may be painted "
+        "above the top plate.",
+        # CLIENT 2026-08-13, circling the second dark strip under Raphael's type line: "on one of
+        # them it has 2 creature type text boxes, here it looks kind of natural but i have seen
+        # these as errors many times". That card came back with two narrow strips; we printed the
+        # type line into the upper one and the lower one stayed blank, which is exactly what a
+        # second painted-but-empty surface looks like to a customer. The count was already stated
+        # twice and still lost, so an extra surface is now also DETECTED and repainted
+        # (`generation.panels`, `generation.check`) rather than only asked against.
         f"That is {total} and only {total}. Do not add one more, do not repeat one, and do not "
         "split a surface into a row of smaller ones — the one broad pale strip is the only place "
-        "the rules text goes. Everything between the picture and these surfaces is scene or edge "
-        "material — never another plate, tablet, ingot, cartouche or panel.",
+        "the rules text goes. In particular there is exactly ONE narrow strip above it: a second "
+        "narrow strip, bar or ledge anywhere near it is a failed image. Everything between the "
+        "picture and these surfaces is "
+        + ("scene" if borderless else "scene or edge material")
+        + " — never another plate, tablet, ingot, cartouche or panel.",
         "",
         # MEASURED 2026-08-10 against the reference site's own Terror of the Peaks. The earlier
         # reading of this evidence — "their text surfaces are PALE" — was taken from the rules
@@ -696,12 +834,21 @@ def creative_full(
         # on all three and the narrow strip was omitted on all three. The art has to be told it
         # outranks the furniture.
         "THE ARTWORK DOMINATES THE CARD. The picture is the largest thing on it and everything "
-        "above sits on top of the picture. The edge material is a narrow margin — no thicker "
-        "than 1/12th of the card where it is thickest, and thinner than that along the sides. "
-        "The raised surfaces together may cover no more than a third of the card's height, "
+        "above sits on top of the picture. "
+        + (
+            ""
+            if borderless
+            else "The edge material is a narrow margin — no thicker than 1/12th of the card where "
+            "it is thickest, and thinner than that along the sides. "
+        )
+        + "The raised surfaces together may cover no more than a third of the card's height, "
         "and the strip is a BAND across the lower third — never half the card.",
-        "Neither the raised surfaces nor the edge material may cover the subject's head, face "
-        "or silhouette.",
+        (
+            "The raised surfaces may not cover the subject's head, face or silhouette."
+            if borderless
+            else "Neither the raised surfaces nor the edge material may cover the subject's head, "
+            "face or silhouette."
+        ),
         "",
         QUALITY,
         "",
@@ -717,13 +864,30 @@ def creative_full(
         # decoration a model reaches for — Twinflame Tyrant on their own site has painted fake
         # runes sitting beside its real composited rules text.
         "ABSOLUTE REQUIREMENT, overriding everything above: there is NO WRITING ANYWHERE ON THIS "
-        "IMAGE — not on the raised surfaces, not on the edge material, and not in the gaps "
-        "between them. Every raised surface is bare stone, bare wood, bare metal — blank. No "
-        "letters, no words, no names, no titles, no numbers, no glyphs, no decorative script, "
-        "no fake writing, no watermark, no emblem, no mana symbols, no set symbol. If you are "
-        "tempted to label a surface or carve script into the edge, leave it empty instead. Real "
-        "text is printed onto these surfaces afterwards and anything you paint on them will "
-        "collide with it.",
+        "IMAGE — not on the raised surfaces, "
+        + ("not anywhere in the artwork" if borderless else "not on the edge material")
+        + ", and not in the gaps between them. Every raised surface is bare stone, bare wood, "
+        "bare metal — blank. No letters, no words, no names, no titles, no numbers, no glyphs, no "
+        "decorative script, no fake writing, no watermark, no emblem, no mana symbols, no set "
+        "symbol. If you are tempted to label a surface or carve script into it, leave it empty "
+        "instead. Real text is printed onto these surfaces afterwards and anything you paint on "
+        "them will collide with it.",
+        # CLIENT 2026-08-13, circling the swirl beside the reference site's own type line: "these
+        # are set symbols, to know which set the cards from, but these are proxies that dont have
+        # a set so its just a random symbol and actually sometimes ive seen it put a real symbol
+        # on the card which isnt good, but if we can not have these generate that would be great."
+        #
+        # It was already one item in the list above and the list is twelve items long, which is
+        # the same distance problem the rune sentence was created to solve. A real symbol is the
+        # worse case of the two: an invented swirl is meaningless, a real expansion symbol is a
+        # Wizards mark printed on a proxy. So it gets its own sentence, and it names the PLACE it
+        # appears — the model is reproducing a card layout it has seen ten thousand times, and the
+        # slot is more load-bearing than the shape.
+        "NO SET SYMBOL. A real Magic card carries a small expansion symbol at the right-hand end "
+        "of its type line; this card belongs to no set, so that slot stays EMPTY. Paint no small "
+        "badge, emblem, gem, seal, crest, sigil, rune-circle, spiral or logo at either end of any "
+        "surface, in any corner, or anywhere in the artwork. Where one would sit, paint the "
+        "surface's own plain material.",
         # MEASURED 2026-08-11 on Raphael: a band of carved rune-like marks came back in the gap
         # between the type plate and the rules panel — a region the ban above named as surfaces
         # and edge, and therefore did not cover. Runes are the recurring form of this failure
@@ -757,8 +921,9 @@ def creative_full(
         lines.insert(
             writing_ban,
             "AND: no purple, violet, magenta or lilac anywhere in this image — not in the art, "
-            "not in the light, not in the edge material, not in any surface. Purple reads as "
-            "black mana and this card is not black.",
+            "not in the light, "
+            + ("" if borderless else "not in the edge material, ")
+            + "not in any surface. Purple reads as black mana and this card is not black.",
         )
     return "\n".join(lines)
 
@@ -799,14 +964,7 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
     lines += ["", _palette(face.get("color_identity") or [])]
 
     if reference:
-        lines += [
-            "",
-            "The attached image is the card's official artwork. Take from it ONLY what is "
-            "depicted — who or what is in it, and what they are doing. Take nothing of how "
-            "it is drawn: not its palette, not its lighting, not its period, not its level "
-            "of realism, not its setting. Where the reference and the art style disagree, "
-            "the art style wins.",
-        ]
+        lines += ["", REFERENCE]
     if style:
         lines += [
             "",

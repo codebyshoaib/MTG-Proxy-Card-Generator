@@ -6,10 +6,10 @@ that each was caught only because a human happened to be looking at the output.
 
 from django.test import SimpleTestCase
 
-from generation import check
+from generation import check, panels as panels_module
 
-CREATURE = {"power": "5", "toughness": "4"}
-SPELL = {"power": None}
+CREATURE = {"power": "5", "toughness": "4", "oracle_text": "Trample"}
+SPELL = {"power": None, "oracle_text": "Counter target spell."}
 SOUND = {
     "title": (0.10, 0.06, 0.90, 0.12),
     "type": (0.10, 0.60, 0.90, 0.66),
@@ -83,6 +83,72 @@ class OverflowTests(SimpleTestCase):
     def test_text_that_does_not_fit_is_a_fault(self):
         """compositor already computed this; nothing acted on it before."""
         self.assertIn("text_too_small", codes(CREATURE, SOUND, overflowed=True))
+
+
+class BlankSurfaceTests(SimpleTestCase):
+    """CLIENT 2026-08-13, circling the second dark bar under Raphael's type line: "on one of them
+    it has 2 creature type text boxes, here it looks kind of natural but i have seen these as
+    errors many times". The defect is a painted surface with nothing printed on it, and the brief
+    had already been told the count twice."""
+
+    def test_a_spare_surface_the_detector_reports_is_a_fault(self):
+        panels = {**SOUND, "spare": [(0.10, 0.66, 0.90, 0.70)]}
+        self.assertIn("blank_surface", codes(CREATURE, panels))
+
+    def test_more_pale_strips_than_paragraphs_is_the_same_fault(self):
+        """The other way in. `compositor._rules` slices `boxes[: len(paragraphs)]`, so a third
+        strip on a one-ability card is not printed into and is left bare — identical to a customer,
+        so it carries the same code rather than passing as a layout the compositor coped with."""
+        panels = {**SOUND, "rules": [(0.10, 0.67, 0.90, 0.78), (0.10, 0.80, 0.90, 0.90)]}
+        self.assertIn("blank_surface", codes(CREATURE, panels))
+
+    def test_a_strip_per_paragraph_is_not_a_fault(self):
+        """The brief asks for one slab, but the model paints one strip per ability on a fair share
+        of cards and the compositor deals paragraphs across them by capacity. Two strips for two
+        abilities is a card that prints correctly, not a defect."""
+        two = {**CREATURE, "oracle_text": "Flying\nTrample"}
+        panels = {**SOUND, "rules": [(0.10, 0.67, 0.90, 0.78), (0.10, 0.80, 0.90, 0.90)]}
+        self.assertNotIn("blank_surface", codes(two, panels))
+
+    def test_a_legacy_single_box_is_not_counted_as_four_strips(self):
+        """Every stored detection and several hand-written tests carry `rules` as a bare 4-tuple.
+        Counted without unwrapping it that is four strips on a one-ability card, which would
+        repaint every one of them."""
+        panels = {**SOUND, "rules": (0.10, 0.67, 0.90, 0.90)}
+        self.assertNotIn("blank_surface", codes(CREATURE, panels))
+
+
+class PaintedMarkTests(SimpleTestCase):
+    def test_painted_lettering_or_a_set_symbol_is_a_fault(self):
+        """CLIENT 2026-08-13: "these are set symbols ... but these are proxies that dont have a set
+        so its just a random symbol and actually sometimes ive seen it put a real symbol on the card
+        which isnt good". The brief has banned painted writing since the first Creative Full card
+        and Raphael still came back with a band of runes, so the ban alone does not hold — and a
+        REAL expansion symbol is a Wizards mark printed on a proxy."""
+        panels = {**SOUND, "marks": [(0.80, 0.61, 0.88, 0.66)]}
+        self.assertIn("painted_marks", codes(CREATURE, panels))
+
+    def test_a_clean_card_reports_neither_new_fault(self):
+        self.assertEqual(check.inspect(CREATURE, {**SOUND, "spare": [], "marks": []}, False), [])
+
+    def test_a_mark_in_the_pt_corner_is_the_shield_and_is_dropped(self):
+        """MEASURED 2026-08-13 on the first two borderless creatures: the detector reported the
+        blank P/T shield as a painted mark on 4 of 4 runs before the wording was tightened and 1 of
+        4 after — it is the same object every time, a small blank badge in the bottom-right corner.
+        A real set symbol sits at the right-hand end of the TYPE LINE, nowhere near this region, so
+        dropping it here costs nothing a repaint would have bought."""
+        self.assertTrue(panels_module._in_pt_corner((0.76, 0.82, 0.94, 0.96)))
+        # The type line's right-hand end — where a real expansion symbol goes — must still count.
+        self.assertFalse(panels_module._in_pt_corner((0.78, 0.61, 0.90, 0.66)))
+
+    def test_every_fault_the_check_acts_on_is_both_asked_for_and_explained(self):
+        """The silent-failure mode for this whole mechanism: a key in the response schema that the
+        prompt never describes comes back empty on every card, and the two defects the client
+        reported stop being detected with nothing anywhere saying so."""
+        for key in panels_module.FAULTS:
+            with self.subTest(key=key):
+                self.assertIn(key, panels_module.SCHEMA["properties"])
+                self.assertIn(f'"{key}"', panels_module.PROMPT)
 
 
 class RetryWiringTests(SimpleTestCase):
