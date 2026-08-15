@@ -50,6 +50,16 @@ UNDETECTED = [
     # different furniture. Kept in the sample: it is a card a customer would have got.
     ("92de37eb", "Elesh Norn", (0.077, 0.788, 0.919, 0.929), (0.775, 0.888, 0.905, 0.945)),
     ("6a76f665", "Elesh Norn", (0.136, 0.684, 0.862, 0.906), (0.785, 0.828, 0.895, 0.945)),
+    # ADDED 2026-08-15 from job 519273ac, and it is the one that breaks the model rather than
+    # widening it. Every card above has its lowest rules strip ending at 0.898-0.943, so the
+    # shield is pinned into the little room left below it and the offset cannot be far wrong.
+    # Terror's strip ends at 0.831 — OUTSIDE that range — and the shield is painted 0.195 wide,
+    # wider than anything in either population. The guess lands 0.038 high and 3.3x too small by
+    # area, which puts the printed 5/4 on the shield's upper rim instead of its body.
+    #
+    # So `infer_pt` is being EXTRAPOLATED, and the sign flips when you do: shield centre minus
+    # strip bottom is -0.006 to -0.029 on all five above and +0.024 here.
+    ("519273ac", "Terror", (0.108, 0.620, 0.892, 0.831), (0.727, 0.771, 0.922, 0.940)),
 ]
 
 
@@ -138,6 +148,16 @@ def main():
     # inside. The cost is asymmetric, so the statistic should not be symmetric either — but the
     # offset is already unbiased on this sample, and it is only the SIZE that was fitted on the
     # wrong population.
+    # WHAT THIS OVERHANG NUMBER DOES NOT CATCH, found on Terror 2026-08-15. It compares the guess
+    # against the shield's OUTER SILHOUETTE, and Terror scores +0.000 — the box is entirely inside
+    # the painted shape. The card still looks wrong, because a shield is a rim around a recessed
+    # INNER FACE and only the inner face is printable. Terror's silhouette starts at y=0.771 and
+    # its inner face at about y=0.801; `_display` put the glyphs at 0.794-0.840, so they open on
+    # the bright metallic rim and only finish on the face.
+    #
+    # Measure the inner face, not the silhouette, when this is next fitted — and note that the
+    # rim's share is not constant either, because it scales with a shield that ranges 0.067-0.195
+    # wide. That is the case against ever fixing this with another constant (bd mtg-1uv).
     print("\n  how far outside the painted surface does each guess reach today?")
     for job, card, strip, real in UNDETECTED:
         guess = panels.infer_pt({"rules": [strip]})

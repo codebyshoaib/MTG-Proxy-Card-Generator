@@ -150,7 +150,9 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
             if depth:
                 note(f"trimmed a {depth:.1%} painted margin — the brief asked for full bleed")
 
-        detected = panels.detect(png, paragraphs=paragraphs)
+        detected = panels.detect(
+            png, paragraphs=paragraphs, expect_pt=face.get("power") is not None
+        )
         # Before anything grades this: a creature whose shield went undetected gets it placed from
         # the strip below it (bd mtg-wfp). Done HERE rather than in the compositor so `check` sees
         # the same card the customer will — otherwise it fires `missing_pt` and burns a repaint on

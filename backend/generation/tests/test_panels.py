@@ -108,3 +108,63 @@ class InferPtTests(SimpleTestCase):
         for value in box:
             self.assertGreaterEqual(value, 0.04)
             self.assertLessEqual(value, 0.96)
+
+
+class CornerDetailTests(SimpleTestCase):
+    """The shield is found by looking closer, in the SAME call (bd mtg-1uv).
+
+    `detect` reports it on 7 of 20 runs over the same stored blanks and three rounds of rewording
+    never moved that, because it is a resolution problem: the smallest shield measured is 0.067 of
+    the card wide, ~120px in a 1792x2400 frame the model also has to read four other surfaces out
+    of. The corner is attached as a second image part rather than as a third AI call — a card
+    already pays for two.
+    """
+
+    def _png(self, size=(400, 536)):
+        import io
+
+        from PIL import Image
+
+        out = io.BytesIO()
+        Image.new("RGB", size, (30, 30, 30)).save(out, format="PNG")
+        return out.getvalue()
+
+    def test_the_corner_is_cut_from_the_bottom_right_and_enlarged(self):
+        import io
+
+        from PIL import Image
+
+        card = self._png()
+        crop = Image.open(io.BytesIO(panels._corner(card)))
+        region, scale = panels.PT_CROP, panels.PT_CROP_SCALE
+        # Computed the way the crop is taken — from the rounded edges, not from the rounded span.
+        self.assertEqual(crop.size, (
+            (400 - int(region[0] * 400)) * scale,
+            (536 - int(region[1] * 536)) * scale,
+        ))
+        self.assertGreater(crop.width, 0.4 * 400, "the corner is enlarged, not shrunk")
+
+    def test_the_crop_covers_every_shield_ever_measured(self):
+        """A shield outside the crop is one the second image cannot help with."""
+        for _strip, shield in MEASURED + UNDETECTED:
+            self.assertGreaterEqual(shield[0], panels.PT_CROP[0], "shield starts left of the crop")
+            self.assertGreaterEqual(shield[1], panels.PT_CROP[1], "shield starts above the crop")
+
+    def test_a_box_in_the_crop_maps_back_to_the_card(self):
+        """The model answers in the crop's coordinates; the arithmetic is ours, so it is testable."""
+        whole = panels._from_crop((0.0, 0.0, 1.0, 1.0))
+        self.assertEqual(whole, panels.PT_CROP)
+        x0, y0, x1, y1 = panels.PT_CROP
+        centre = panels._from_crop((0.5, 0.5, 0.5, 0.5))
+        self.assertAlmostEqual(centre[0], (x0 + x1) / 2)
+        self.assertAlmostEqual(centre[1], (y0 + y1) / 2)
+
+    def test_terror_would_have_been_placed_on_the_shield_not_its_rim(self):
+        """The card that exposed this (job 519273ac). The guess put the glyphs at y 0.794-0.840,
+        opening on the bright rim; the shield's inner face starts about 0.801. A detail box
+        reported against the enlarged corner maps back onto the face instead."""
+        # The inner face as it appears in the crop's own coordinates.
+        face_in_crop = (0.39, 0.55, 0.83, 0.82)
+        mapped = panels._from_crop(face_in_crop)
+        self.assertGreater(mapped[1], 0.801, "the box must start below the shield's rim")
+        self.assertLess(mapped[3], 0.940, "and finish inside the shield's point")

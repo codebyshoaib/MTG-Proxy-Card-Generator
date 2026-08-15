@@ -68,8 +68,36 @@ SCHEMA = {
             "items": BOX,
             "description": "one box per patch of painted lettering, glyphs or emblem",
         },
+        # Answered against the SECOND image when one is attached, in that image's own coordinates.
+        # The model is not asked to map it back to the card — `_from_crop` does that, because
+        # arithmetic in the answer is a second thing that can be wrong.
+        "pt_detail": {
+            **BOX,
+            "description": "the shield in the SECOND image, in that image's own 0-1000 coordinates",
+        },
     },
 }
+
+PT_CROP = (0.56, 0.56, 1.0, 1.0)
+"""The corner of the card the second image is cut from.
+
+Covers every shield in the sample with room to spare: measured across six cards they span
+x 0.727-0.925, y 0.771-0.960 (spikes/measure_pt_shield.py).
+"""
+
+PT_CROP_SCALE = 2
+"""How much the corner is enlarged before it is attached.
+
+WHY A CROP AND NOT A SECOND CALL. `detect` reports the shield on 7 of 20 runs over the same
+stored blanks, and three rounds of rewording never moved it — it is a resolution problem, not a
+comprehension one. The smallest shield measured is 0.067 of the card wide, which is ~120px in a
+1792x2400 frame the model also has to read four other surfaces out of. Cutting the corner and
+doubling it makes that shield ~480px in a 394x528 frame.
+
+This rides along in the EXISTING call as a second image part rather than adding a third AI call
+to the two a card already costs. The extra image is ~0.2 megapixels against the full card's 4.3,
+so it is a rounding error on the call we were making anyway — and it replaces a guess that has
+no way to see the thing it is guessing at (bd mtg-1uv)."""
 
 PROMPT = """This is a fantasy trading card with BLANK raised surfaces and no writing on it.
 
@@ -114,6 +142,19 @@ the artwork crosses in FRONT of a surface, keep that out of the box as well.
 
 Omit a key entirely if that surface genuinely is not present on this card. Do not guess, and do
 not report a region of the artwork, or the card's edge decoration, as a surface."""
+
+PT_DETAIL_PROMPT = """
+A SECOND image is attached. It is the bottom-right corner of the same card, enlarged, so the
+small shield is easier to see than it is in the full card above.
+
+This card is a creature, so it has a power/toughness value to print and a shield to print it on.
+
+In "pt_detail", give the shield's box IN THE SECOND IMAGE'S OWN COORDINATES, 0-1000 over that
+image's width and height — not the card's. Give its INNER FACE: the flat recessed area the
+numbers will be printed on, INSIDE the raised rim, not the shield's outer silhouette. The rim is
+often bright metal and printing on it is exactly the mistake to avoid.
+
+If the second image shows no shield, boss or plaque at all, omit "pt_detail"."""
 
 
 def _usable(box):
@@ -174,6 +215,19 @@ def _in_pt_corner(box):
 # glyphs at half the box height and centres them, so a box smaller than the shield prints a P/T
 # safely inside it, while a box larger than the shield prints one hanging off the edge. When this
 # is next re-measured, err small.
+#
+# THE DOMAIN THIS HOLDS ON, added 2026-08-15 after Terror of the Peaks broke it (job 519273ac).
+# Every card the offset was fitted on has its lowest rules strip ending at 0.898-0.943, where the
+# little room left below pins the shield in place and the offset cannot be far wrong. Terror's
+# strip ends at 0.831 and its shield is painted 0.195 wide — wider than anything in either
+# population — so the guess landed 0.038 high and the printed 5/4 opened on the shield's rim.
+# The residual even flips sign outside the range: centre-minus-strip-bottom is -0.006 to -0.029
+# on all five fitted cards and +0.024 on Terror.
+#
+# Do not answer this with another constant. The shield varies 0.067-0.195 wide, the printable
+# INNER FACE is a rim's width inside the silhouette, and that rim scales with the shield — so
+# there is no fixed box that tracks it (bd mtg-1uv). It needs the surface observed: either the
+# detector made to see it, or a second cropped ask at the corner where it missed.
 PT_OFFSET = (-0.046, -0.014)
 PT_SIZE = (0.110, 0.092)
 
@@ -209,7 +263,36 @@ def infer_pt(panels):
     return tuple(min(0.96, max(0.04, value)) for value in box)
 
 
-def detect(png, paragraphs=None):
+def _corner(png, region=PT_CROP, scale=PT_CROP_SCALE):
+    """The card's bottom-right corner, enlarged, as PNG bytes."""
+    import io
+
+    from PIL import Image
+
+    card = Image.open(io.BytesIO(png))
+    width, height = card.size
+    crop = card.crop((
+        int(region[0] * width), int(region[1] * height),
+        int(region[2] * width), int(region[3] * height),
+    ))
+    crop = crop.resize((crop.width * scale, crop.height * scale), Image.LANCZOS)
+    out = io.BytesIO()
+    crop.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
+def _from_crop(box, region=PT_CROP):
+    """A box in the crop's own fractions back into the card's fractions."""
+    span_x, span_y = region[2] - region[0], region[3] - region[1]
+    return (
+        region[0] + box[0] * span_x,
+        region[1] + box[1] * span_y,
+        region[0] + box[2] * span_x,
+        region[1] + box[3] * span_y,
+    )
+
+
+def detect(png, paragraphs=None, expect_pt=False):
     """{'title': box, 'rules': [box, ...], ...} in 0-1 fractions of the canvas.
 
     Fractions rather than pixels so the result survives the print-resolution upscale, and so a
@@ -231,9 +314,18 @@ def detect(png, paragraphs=None):
             "strip(s) is the likely answer — but report what you actually see, not what "
             "this number predicts."
         )
+    # The corner rides along in THIS call, not a third one. Only for creatures: a card with no
+    # power has no shield to find, and attaching the crop anyway only invites a false positive on
+    # a rivet or a boss.
+    contents = [types.Part.from_bytes(data=png, mime_type="image/png")]
+    if expect_pt:
+        prompt += PT_DETAIL_PROMPT
+        contents.append(types.Part.from_bytes(data=_corner(png), mime_type="image/png"))
+    contents.append(prompt)
+
     response = gemini.client().models.generate_content(
         model=MODEL,
-        contents=[types.Part.from_bytes(data=png, mime_type="image/png"), prompt],
+        contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=SCHEMA,
@@ -253,4 +345,11 @@ def detect(png, paragraphs=None):
             boxes = [box for box in boxes if not _in_pt_corner(box)]
         if boxes:
             panels[key] = sorted(boxes, key=lambda box: box[1])
+
+    # The enlarged corner OUTRANKS the full-card answer for this one surface: both look at the
+    # same shield, and one of them can actually see it. When the corner finds nothing the
+    # full-card `pt` still stands, so this can only add a detection, never lose one.
+    detail = _usable(raw.get("pt_detail"))
+    if detail:
+        panels["pt"] = _from_crop(detail)
     return panels
