@@ -8,11 +8,25 @@ this file, not the pipeline.
 """
 
 import os
+import time
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 MODEL = "gemini-3-pro-image"
+
+# Waits between attempts after an upstream 5xx, in seconds.
+#
+# MEASURED, twice, in the wild: 'Worldgorger Dragon' died on 503 UNAVAILABLE "Deadline expired
+# before operation could complete" on 2026-08-10, and an Elesh Norn repaint died the same way on
+# 2026-08-15 (job d15398fc) — the second one on the RETRY call, after the first image had already
+# been paid for. A 503 is the upstream being briefly busy and says nothing about the prompt, so
+# giving up on it throws away a card the user is paying for (bd mtg-a6u).
+#
+# Three tries over ~9s, not more: the request itself already carries a long deadline, the caller
+# may be one of sixty faces in a deck, and a provider that is still 503ing after this is down
+# rather than busy — at which point failing the card quickly beats holding a worker for a minute.
+BACKOFF = (1, 3, 5)
 
 _client = None
 
@@ -48,6 +62,30 @@ class NoImage(RuntimeError):
         )
 
 
+def _call(parts):
+    """One image request, retried through a transient upstream 5xx.
+
+    ONLY 5xx. A refusal and a bad request repeat forever for the same prompt, so retrying them
+    burns credits to reach the same answer — which is the same distinction `NoImage.refused`
+    draws one level up.
+    """
+    for attempt, wait in enumerate(BACKOFF):
+        try:
+            return client().models.generate_content(
+                model=MODEL,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    image_config=types.ImageConfig(aspect_ratio="3:4", image_size="2K"),
+                ),
+            )
+        except errors.ServerError:
+            # No sleep after the last attempt — there is nothing left to wait for, and this runs
+            # inside a worker holding one of four slots for a whole deck.
+            if attempt == len(BACKOFF) - 1:
+                raise
+            time.sleep(wait)
+
+
 def generate(prompt, reference=None):
     """PNG bytes for one prompt.
 
@@ -65,13 +103,7 @@ def generate(prompt, reference=None):
         parts.append(types.Part.from_bytes(data=reference, mime_type="image/jpeg"))
     parts.append(prompt)
 
-    response = client().models.generate_content(
-        model=MODEL,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            image_config=types.ImageConfig(aspect_ratio="3:4", image_size="2K"),
-        ),
-    )
+    response = _call(parts)
     # Every level of this is optional in a refusal: no candidates, a candidate with no
     # content, or content with no parts. Walking it blind turns a refusal into a TypeError
     # that says nothing about why the card failed.
