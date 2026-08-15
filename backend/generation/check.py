@@ -130,12 +130,103 @@ def inspect(face, panels, overflowed):
     # still came back with a band of runes, so the ban is not enough on its own: anything the
     # model letters or stamps collides with the text we print, and a REAL expansion symbol is a
     # Wizards mark on a proxy. Neither may ship on the strength of a prompt alone.
-    if panels.get("marks"):
+    #
+    # Graded by WHERE it lands, not by whether it exists. Presence alone over-rejects twice over:
+    # a mark under a plate we print into is covered by our own text and never reaches the
+    # customer, and a card whose subject is magic — Delver of Secrets, measured, twice — carries
+    # arcane script in its artwork as a matter of illustration. Both failed the whole card and
+    # bought a repaint that changed nothing.
+    #
+    # What is still a defect is writing that imitates card furniture: it sits ON or AGAINST a
+    # plate, or it runs as a long flat line the way a type line does. That is the shape the
+    # client circled, and a real expansion symbol arrives the same way, at the type line's end.
+    offenders = _offending_marks(panels)
+    if offenders:
         problems.append(
             Problem(
                 "painted_marks",
-                f"{len(panels['marks'])} patch(es) of painted lettering, runes or insignia — "
-                "fake writing or a set symbol on a card that has no set",
+                f"{len(offenders)} patch(es) of painted lettering, runes or insignia on or "
+                "against the printed surfaces — fake card text or a set symbol on a card that "
+                "has no set",
             )
         )
     return problems
+
+
+NEAR = 0.015
+"""How close to a plate a mark may sit, as a share of the card, before it reads as part of it."""
+
+BANNER = (0.35, 3.0)
+"""Width share and aspect above which a mark is a line of writing wherever it sits.
+
+A band of runes across open art is still fabricated text if it is shaped like a line of it —
+that is how Raphael came back, and it is the shape a type line has.
+"""
+
+
+def _area(box):
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _inside(mark, surface):
+    """Share of `mark` that lies within `surface`."""
+    overlap = (
+        max(mark[0], surface[0]),
+        max(mark[1], surface[1]),
+        min(mark[2], surface[2]),
+        min(mark[3], surface[3]),
+    )
+    return _area(overlap) / _area(mark) if _area(mark) else 0.0
+
+
+def _grown(box, by=NEAR):
+    return (box[0] - by, box[1] - by, box[2] + by, box[3] + by)
+
+
+def _printed(panels):
+    """Every surface we print our own text into — the ones a mark can hide under or imitate."""
+    from generation.panels import SINGLE
+
+    surfaces = [panels[key] for key in SINGLE if panels.get(key)]
+    return surfaces + _strips(panels.get("rules"))
+
+
+def _offending_marks(panels):
+    """The marks that read as card text rather than as illustration.
+
+    Boxes are (x0, y0, x1, y1) normalised, the convention `panels.detect` returns.
+
+    Being ON a plate is enough on its own — a mark there is either writing imitating the field or
+    a set symbol at the type line's right end, and our own printed text does not cover the whole
+    plate, which is exactly how the client saw the set symbol he reported. What is NOT a defect is
+    script out in the artwork: on a card about arcane writing that is the illustration, and
+    failing it bought a repaint that came back with the same thing.
+    """
+    surfaces = _printed(panels)
+    offenders = []
+    for mark in _strips(panels.get("marks")):
+        width, height = mark[2] - mark[0], mark[3] - mark[1]
+        line_shaped = width >= BANNER[0] and height > 0 and width / height >= BANNER[1]
+        if line_shaped or any(_inside(mark, _grown(surface)) > 0 for surface in surfaces):
+            offenders.append(mark)
+    return offenders
+
+
+def matted(card):
+    """A mat the trim could not cut, or None.
+
+    `bleed.trim` removes an even margin before the card is composited, so anything still here is
+    a margin it refused to touch — deeper than `bleed.MAX_DEPTH`, or on three sides rather than
+    four, where cropping would slide the art off centre. Either way the client circled this exact
+    defect on 2026-08-13, so it is reported rather than shipped.
+    """
+    from generation import bleed
+
+    share = bleed.matted_share(card.convert("RGB"))
+    if share < bleed.MATTED:
+        return None
+    return Problem(
+        "matted",
+        f"{share:.0%} of the card's edge is one flat light colour — a border on a card asked to "
+        "run full bleed",
+    )
