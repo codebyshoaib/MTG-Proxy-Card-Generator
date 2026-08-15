@@ -306,6 +306,20 @@ STYLE_LABELS = {
 }
 _BY_LABEL = {label.lower(): key for key, label in STYLE_LABELS.items()}
 
+# Their own grouping of the 48, same source and same date as DIRECTIONS below. Presentation
+# only — it changes no brief — but 48 options in one flat list is a scroll, not a choice.
+STYLE_GROUPS = {
+    "Classic": ("fantasy_realistic", "oil_painting", "watercolor", "digital_art", "sketch", "ink_drawing", "vintage_mtg"),
+    "Animated": ("anime", "studio_ghibli", "disney", "pixar", "rick_and_morty", "adventure_time", "comic_book", "manga"),
+    "Modern": ("cyberpunk", "vaporwave", "synthwave", "pixel_art", "low_poly", "neon_noir"),
+    "Artistic": ("impressionist", "art_nouveau", "art_deco", "surrealism", "expressionism", "baroque"),
+    "Dark": ("dark_fantasy", "gothic", "lovecraftian", "grimdark", "body_horror"),
+    "Light": ("ethereal", "celestial", "pastel_fantasy", "kawaii", "fairy_tale"),
+    "Artists": ("mtg_seb_mckinnon", "mtg_rebecca_guay", "mtg_john_avon", "alphonse_mucha", "hr_giger", "moebius"),
+    "Other": ("stained_glass", "paper_cut", "graffiti", "propaganda_poster", "tarot_card"),
+}
+STYLE_GROUP_OF = {key: group for group, keys in STYLE_GROUPS.items() for key in keys}
+
 
 def _style_text(style):
     """A style key, a style label, or free text -> the attributes to paint from.
@@ -319,6 +333,81 @@ def _style_text(style):
     if key in STYLES:
         return STYLES[key]
     return STYLES.get(_BY_LABEL.get(key.lower(), ""), key)
+
+
+# The other two option groups, `art_direction` (21) and `color_palette` (20), EXTRACTED VERBATIM
+# from their bundle on 2026-08-15 — `tcggenerator.com/assets/index-Btl2yW79.js`, where the three
+# catalogues sit together as `{classic:[...], animated:[...]}` object literals. Their keys, their
+# labels and their grouping; only the brief text after each one is ours, because their prompts
+# are server-side and were never obtained.
+#
+# Each entry is (label, brief text, group). The text goes into the brief as written, and
+# unrecognised input passes through, so the frontend's select and its free-text field are the
+# same field. The group is presentation: it drives the `<optgroup>` headings, exactly as they
+# group theirs.
+#
+# Every palette phrase is worded as LIGHT and TREATMENT rather than as hues, because the brief
+# constrains it with "within the colour identity above" and colour identity comes from Scryfall,
+# never from the palette (CLAUDE.md). A palette that named hues would fight that rule — a violet
+# one on a mono-green card misstates the card's colour in MTG's own visual language. This is why
+# "Toxic" and "Cosmic" describe luminescence and starlight rather than green and purple.
+DIRECTIONS = {
+    "dynamic": ("Dynamic", "caught mid-action on a strong diagonal, weight and motion", "Composition"),
+    "portrait": ("Portrait", "a formal portrait, the subject squared to the viewer", "Composition"),
+    "close_up": ("Close Up", "a tight crop on the subject's head and shoulders", "Composition"),
+    "full_body": ("Full Body", "the whole subject in frame, head to feet", "Composition"),
+    "landscape": ("Landscape", "the subject small against a vast landscape", "Composition"),
+    "aerial_view": ("Aerial View", "seen from high above, looking down", "Composition"),
+    "worms_eye": ("Worm's Eye", "seen from ground level, towering over the viewer", "Composition"),
+    "cinematic": ("Cinematic", "an anamorphic film frame, shallow focus, lens bloom", "Cinematic"),
+    "dramatic": ("Dramatic", "one hard key light, deep falloff into shadow", "Cinematic"),
+    "epic": ("Epic", "scale and grandeur, the moment a legend is made", "Cinematic"),
+    "intimate": ("Intimate", "close and quiet, a private moment", "Cinematic"),
+    "minimalist": ("Minimalist", "one subject, empty space, nothing else competing", "Style"),
+    "detailed": ("Detailed", "dense detail and ornament carried into every corner", "Style"),
+    "abstract": ("Abstract", "shape, gesture and light over literal description", "Style"),
+    "symmetrical": ("Symmetrical", "a formal, mirrored composition built on a centre line", "Style"),
+    "rule_of_thirds": ("Rule of Thirds", "the subject set off-centre on a third", "Style"),
+    "heroic": ("Heroic", "the moment a stand is made, light breaking through", "Mood"),
+    "menacing": ("Menacing", "something is about to go wrong, tension held", "Mood"),
+    "peaceful": ("Peaceful", "still and unhurried, soft light, nothing threatening", "Mood"),
+    "chaotic": ("Chaotic", "everything in motion at once, debris and clash", "Mood"),
+    "mysterious": ("Mysterious", "half-hidden, fog and withheld information", "Mood"),
+}
+
+PALETTES = {
+    "vibrant": ("Vibrant", "saturated and high-key, colour pushed hard", "Basic"),
+    "muted": ("Muted", "desaturated and restrained, colour held back", "Basic"),
+    "dark": ("Dark", "a low-key scene, deep shadow with light used sparingly", "Basic"),
+    "light": ("Light", "a high-key scene, bright and open with soft shadow", "Basic"),
+    "pastel": ("Pastel", "soft, chalky and light, no hard darks", "Basic"),
+    "monochrome": ("Monochrome", "near-monochrome, one hue carrying the whole image", "Basic"),
+    "neon": ("Neon", "neon signage as the light source, wet reflective surfaces", "Specific"),
+    "earth_tones": ("Earth Tones", "ochre, clay and weathered stone, nothing synthetic", "Specific"),
+    "jewel_tones": ("Jewel Tones", "deep saturated gemlike colour, lit from within", "Specific"),
+    "metallic": ("Metallic", "polished metal, specular highlights and reflected light", "Specific"),
+    "sepia": ("Sepia", "aged and toned, like a photograph left in the sun", "Specific"),
+    "warm": ("Warm", "warm light throughout, amber and firelit", "Temperature"),
+    "cool": ("Cool", "cool light throughout, cold air and long shadow", "Temperature"),
+    "sunset": ("Sunset", "low sun, long shadows, warm haze", "Themed"),
+    "ocean": ("Ocean", "underwater light, caustics and suspended particles", "Themed"),
+    "forest": ("Forest", "dappled light through canopy, moss and damp bark", "Themed"),
+    "fire": ("Fire", "lit by flame, embers and heat haze", "Themed"),
+    "ice": ("Ice", "lit through ice, frost and pale glare", "Themed"),
+    "toxic": ("Toxic", "sickly luminescence, vapour and stained ground", "Themed"),
+    "cosmic": ("Cosmic", "starfield and nebula light, vast and cold", "Themed"),
+}
+
+
+def _catalogue_text(value, table):
+    """A key, a label, or free text -> the brief text, by the same rule as `_style_text`."""
+    if not value:
+        return None
+    key = str(value).strip()
+    if key in table:
+        return table[key][1]
+    by_label = {label.lower(): text for label, text, _group in table.values()}
+    return by_label.get(key.lower(), key)
 
 
 # Applied to EVERY brief regardless of style. MEASURED 2026-08-10 against the reference site's
@@ -574,9 +663,13 @@ def creative_full(
             "furniture as much as the art.",
         ]
     if direction:
-        lines += ["", f"Composition: {direction}."]
+        lines += ["", f"Composition: {_catalogue_text(direction, DIRECTIONS)}."]
     if palette:
-        lines += ["", f"Colour treatment: {palette}, within the colour identity above."]
+        lines += [
+            "",
+            f"Colour treatment: {_catalogue_text(palette, PALETTES)}, within the colour "
+            "identity above.",
+        ]
     if notes:
         # `custom_art_notes` in their payload — the user's own words, placed after the style so it
         # refines rather than replaces it, and before the furniture so it cannot argue with the
@@ -972,9 +1065,13 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
             "world it is set in, the light, the palette and the finish.",
         ]
     if direction:
-        lines += ["", f"Composition: {direction}."]
+        lines += ["", f"Composition: {_catalogue_text(direction, DIRECTIONS)}."]
     if palette:
-        lines += ["", f"Colour treatment: {palette}, within the colour identity above."]
+        lines += [
+            "",
+            f"Colour treatment: {_catalogue_text(palette, PALETTES)}, within the colour "
+            "identity above.",
+        ]
 
     lines += [
         "",

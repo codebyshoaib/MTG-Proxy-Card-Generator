@@ -75,9 +75,39 @@ class ArtOnlyBriefTests(SimpleTestCase):
 
     def test_direction_and_palette_reach_the_brief(self):
         """BUILD-SPEC §10 ships three option groups; we had only wired up the first."""
-        brief = prompts.art_only(GREEN, "Anime", direction="Dynamic", palette="Vibrant")
-        self.assertIn("Composition: Dynamic", brief)
-        self.assertIn("Colour treatment: Vibrant", brief)
+        brief = prompts.art_only(GREEN, "Anime", direction="dynamic", palette="vibrant")
+        self.assertIn("Composition: caught mid-action", brief)
+        self.assertIn("Colour treatment: saturated and high-key", brief)
+
+    def test_the_catalogue_keys_are_the_reference_site_s_own(self):
+        """Extracted verbatim from their bundle on 2026-08-15, so a value from their API — or
+        from a user who read their docs — resolves here instead of passing through as prose."""
+        for key in ("worms_eye", "rule_of_thirds", "intimate", "menacing"):
+            self.assertIn(key, prompts.DIRECTIONS)
+        for key in ("earth_tones", "jewel_tones", "toxic", "cosmic"):
+            self.assertIn(key, prompts.PALETTES)
+
+    def test_an_unknown_direction_or_palette_passes_through_verbatim(self):
+        """Same rule as `_style_text`: the select and the free-text field are one field, so an
+        unrecognised value is a feature rather than a gap."""
+        brief = prompts.art_only(GREEN, direction="shot from a well", palette="lit by one candle")
+        self.assertIn("Composition: shot from a well", brief)
+        self.assertIn("Colour treatment: lit by one candle", brief)
+
+    def test_the_catalogue_is_the_reference_site_s_counts(self):
+        """48/21/20, read off their bundle (HOW-THEY-DO §3). The frontend renders these lists,
+        so a row lost here is a dropdown that silently shrinks."""
+        self.assertEqual(len(prompts.STYLE_LABELS), 48)
+        self.assertEqual(len(prompts.DIRECTIONS), 21)
+        self.assertEqual(len(prompts.PALETTES), 20)
+
+    def test_no_palette_names_a_hue_that_could_restate_the_colour_identity(self):
+        """Colour identity comes from Scryfall, never from the palette (CLAUDE.md) — the client
+        reported purple leaking into a mono-green card. Palettes describe LIGHT, not paint."""
+        for key, (label, text, group) in prompts.PALETTES.items():
+            with self.subTest(palette=key):
+                self.assertNotIn("purple", text.lower())
+                self.assertNotIn("violet", text.lower())
 
     def test_every_style_names_a_medium(self):
         """A row listing only light and mood renders photoreal: 'Neon Noir' described neon rim
