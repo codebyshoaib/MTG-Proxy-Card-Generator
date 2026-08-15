@@ -526,6 +526,52 @@ PALETTES = {
 }
 
 
+STYLE_TIEBREAK = (
+    "Where the style names colours of its own, they are its medium and its mood — the card's "
+    "colour identity above still decides which colour reads hottest."
+)
+"""The other door the same bug walks through (bd mtg-v2n).
+
+MEASURED 2026-08-10: the "Rick and Morty" row hard-codes "acid-bright greens and cyans", and on
+mono-black Vampiric Tutor the style won — the card came back green-lit, misstating its identity
+exactly as the client's original purple-on-mono-green bug did.
+
+23 of the 48 rows name a colour, but most name a MEDIUM — black ink, white paper, the leading in
+stained glass — and stripping those would break the style they describe. The bead's own note is
+that this is arguable and worth asking the client, since their reference deck does it too. So
+this states the tiebreak instead of editing 23 rows on an open question: cheap, reversible, and
+it leaves the decision where it belongs.
+"""
+
+
+def _palette_clause(palette, color_identity):
+    """The colour-treatment line, shared by both modes so there is one answer, not two that drift.
+
+    MEASURED on job 9f16e827 (bd mtg-5pb): `ice` on mono-red Lightning Bolt came back blue-white —
+    frost, icicles, cold glare — with red surviving only as an ember. The identity paragraph is
+    strong and comes first; this clause used to end with "within the colour identity above", a
+    BACK-REFERENCE, and on that card the palette won. Intermittent, too: the rerun with identical
+    inputs read red.
+
+    The fix is the cheap lever the bead itself named — restate the constraint here instead of
+    pointing back at it — plus the positive phrasing that bd mtg-8x6 measured working: name what
+    the card's colour DOES rather than only what the palette may not do. An absolute prohibition
+    repaints the subject; a positive instruction leaves its local colour alone.
+    """
+    treatment = _catalogue_text(palette, PALETTES)
+    if not color_identity:
+        # Colourless already forbids all five hues by name; adding a second, weaker restatement
+        # here would give the model two rules to reconcile instead of one to follow.
+        return f"Colour treatment: {treatment}."
+    names = " and ".join(COLOURS[c] for c in color_identity if c in COLOURS)
+    return (
+        f"Colour treatment: {treatment}. This is the QUALITY OF THE LIGHT and the finish, not a "
+        f"recolouring of the card: the {names} of this card's colour identity stays the brightest "
+        f"and hottest thing in the frame, and the treatment plays around it. Where the two "
+        f"disagree, the {names} wins."
+    )
+
+
 def _catalogue_text(value, table):
     """A key, a label, or free text -> the brief text, by the same rule as `_style_text`."""
     if not value:
@@ -787,16 +833,12 @@ def creative_full(
         lines += [
             "",
             f"Art style: {_style_text(style)}. This governs the whole picture — the "
-            "furniture as much as the art.",
+            f"furniture as much as the art. {STYLE_TIEBREAK}",
         ]
     if direction:
         lines += ["", f"Composition: {_catalogue_text(direction, DIRECTIONS)}."]
     if palette:
-        lines += [
-            "",
-            f"Colour treatment: {_catalogue_text(palette, PALETTES)}, within the colour "
-            "identity above.",
-        ]
+        lines += ["", _palette_clause(palette, face.get("color_identity") or [])]
     if notes:
         # `custom_art_notes` in their payload — the user's own words, placed after the style so it
         # refines rather than replaces it, and before the furniture so it cannot argue with the
@@ -1042,9 +1084,18 @@ def creative_full(
         "The top plate and the narrow strip are DARK — near-black obsidian, blackened iron, "
         "deep oxblood, weathered bronze — because warm gold lettering is printed on them "
         "afterwards.",
-        "The broad strip is LIGHT — warm cream parchment, glowing amber stone, bleached bone, "
-        "aged ivory, lit from within — because near-black lettering is printed on it afterwards. "
-        "Even on a night scene or a lava scene it stays light.",
+        # "Glowing amber stone" used to be in this list and is now excluded by name. MEASURED on
+        # the eight-card Ice batch, job 10746c0b: it was the only MID-value entry among otherwise
+        # pale materials, and on red and green cards the model reached for it because it matched
+        # the scene. Those slabs landed at L=110-133 against 185-210 for the cream ones, taking
+        # the printed text to 3.6:1 and 4.5:1 — unreadable at arm's length, and graded sound by
+        # every structural check we had. `check.contrast` now enforces the floor; this stops the
+        # brief asking for the thing that breaks it.
+        "The broad strip is LIGHT AND PALE — warm cream parchment, bleached bone, aged ivory, "
+        "weathered chalk. Near-black lettering is printed on it afterwards, so it has to be pale "
+        "enough to read that text: think the palest thing in the picture, not a mid-tone. Even on "
+        "a night scene or a lava scene it stays pale — a lava card gets a bone-coloured slab lit "
+        "warm, NOT a slab made of lava. If in doubt, make it paler.",
         "Dark, dark, then light going down the card. Do not paint all three the same value.",
         "",
         # The previous wording here — "quiet: low contrast, low detail, no busy texture and no
@@ -1089,7 +1140,18 @@ def creative_full(
         QUALITY,
         "",
         "Put the subject's face and focal point in the UPPER-MIDDLE of the card, clear of the "
-        "lower strip. Nothing that matters may sit in the lower third.",
+        "lower strip. Nothing COMPETES for attention in the lower third — no second subject, no "
+        "bright hotspot, no dense detail.",
+        # The previous wording — "nothing that matters may sit in the lower third" — is what bd
+        # mtg-9ww recorded failing: asked to keep the lower half calm, the model stopped painting
+        # and left dead space. Same lesson as the raised surfaces above, one layer further out:
+        # legibility needs an EVEN, QUIET CONTINUATION of the scene, not an absence of scene. A
+        # blank lower third also loses the client's "not a rectangle inside a frame" requirement,
+        # because the art visibly stops where the furniture starts.
+        "But the picture CONTINUES through the lower third and out to the bottom edge — ground, "
+        "haze, smoke, embers, water, drifting cloth, the scene going quiet at low contrast and "
+        "low detail. It never stops into a blank panel, a flat wash or bare canvas. Calm is the "
+        "scene continuing softly, not the scene ending.",
         "Keep every raised surface and every important detail inside the middle 92% of the "
         "canvas — the outer edge is trimmed off when the card is cut.",
         "Output ONE image filling the entire frame, edge to edge.",
@@ -1242,16 +1304,12 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
         lines += [
             "",
             f"Art style: {_style_text(style)}. This governs the whole picture — the "
-            "world it is set in, the light, the palette and the finish.",
+            f"world it is set in, the light, the palette and the finish. {STYLE_TIEBREAK}",
         ]
     if direction:
         lines += ["", f"Composition: {_catalogue_text(direction, DIRECTIONS)}."]
     if palette:
-        lines += [
-            "",
-            f"Colour treatment: {_catalogue_text(palette, PALETTES)}, within the colour "
-            "identity above.",
-        ]
+        lines += ["", _palette_clause(palette, face.get("color_identity") or [])]
 
     lines += [
         "",

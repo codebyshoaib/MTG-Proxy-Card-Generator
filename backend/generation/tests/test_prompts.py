@@ -174,6 +174,39 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("a green turtle on a red card stays green", brief)
         self.assertIn("never paint applied to the subject itself", brief)
 
+    def test_the_palette_restates_the_identity_instead_of_pointing_back_at_it(self):
+        """A back-reference lost to the palette on a real card (bd mtg-5pb).
+
+        Job 9f16e827: `ice` on mono-red Lightning Bolt came back blue-white — frost, icicles,
+        cold glare — with red left as an ember. The clause said "within the colour identity
+        above"; pointing at a rule is weaker than restating it, and the rerun with identical
+        inputs read red, so it is intermittent rather than absent.
+        """
+        for brief in (
+            prompts.art_only({**GREEN, "color_identity": ["R"]}, palette="ice"),
+            prompts.creative_full({**GREEN, "color_identity": ["R"]}, palette="ice"),
+        ):
+            self.assertIn("lit through ice, frost and pale glare", brief)
+            self.assertIn("the red of this card's colour identity stays the brightest", brief)
+            self.assertIn("Where the two disagree, the red wins", brief)
+            self.assertNotIn("within the colour identity above", brief)
+
+    def test_a_colourless_card_gets_no_second_weaker_restatement(self):
+        """Colourless already forbids all five hues by name. Restating it here would hand the
+        model two rules to reconcile where it had one to follow."""
+        brief = prompts.art_only({**GREEN, "color_identity": []}, palette="ice")
+        self.assertIn("Colour treatment: lit through ice", brief)
+        self.assertNotIn("stays the brightest", brief)
+
+    def test_a_style_that_names_colours_still_loses_to_the_card(self):
+        """The other door the same bug walks through (bd mtg-v2n): the Rick and Morty row
+        hard-codes 'acid-bright greens and cyans' and turned mono-black Vampiric Tutor green."""
+        for brief in (
+            prompts.art_only(GREEN, "rick_and_morty"),
+            prompts.creative_full(GREEN, "rick_and_morty"),
+        ):
+            self.assertIn("still decides which colour reads hottest", brief)
+
     def test_a_licensed_card_is_briefed_from_its_type_line_not_its_name(self):
         """Hulk is refused with the art attached AND without it; the same card's type line
         generates first try. The card keeps its mechanics and loses only the proper noun."""
@@ -509,6 +542,41 @@ class CreativeFullBriefTests(SimpleTestCase):
         brief = prompts.creative_full(GREEN)
         self.assertIn("UPPER-MIDDLE", brief)
         self.assertIn("middle 92%", brief)
+
+    def test_the_rules_slab_may_not_be_made_of_the_scene_it_sits_in(self):
+        """"Glowing amber stone" was the only mid-value material in a list of pale ones, and it
+        is what red and green cards reached for (job 10746c0b). Those slabs measured 3.6:1 and
+        4.5:1 against the printed text — sound by every structural check, unreadable in the hand.
+        """
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("LIGHT AND PALE", brief)
+        self.assertIn("NOT a slab made of lava", brief)
+        self.assertNotIn("glowing amber stone", brief)
+
+    def test_the_quiet_lower_third_is_a_continuation_and_not_a_blank(self):
+        """Calm is not empty (bd mtg-cjx, bd mtg-9ww).
+
+        "Keep the lower half calm" made the model stop painting and leave dead space. What
+        legibility needs is the scene continuing at low contrast — the same distinction the
+        raised surfaces already carry, one layer further out. The brief has to ask for the
+        continuation and forbid the blank, or it gets one of them at random.
+        """
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("CONTINUES through the lower third", brief)
+        self.assertIn("never stops into a blank panel", brief)
+        # The wording that produced the dead space must not come back.
+        self.assertNotIn("Nothing that matters may sit in the lower third", brief)
+
+    def test_art_only_is_not_given_a_calm_zone_it_has_no_text_to_protect(self):
+        """The calm-zone clause is CONDITIONAL ON MODE, which bd mtg-cjx left undecided.
+
+        Settled by running Art Only end to end on 2026-08-15 (jobs ac1c537c, ec31fe09): with no
+        text box and no trim, full-bleed centred art is correct there. Reserving a quiet lower
+        third for text that never arrives would throw away a third of the picture.
+        """
+        brief = prompts.art_only(GREEN)
+        self.assertNotIn("lower third", brief)
+        self.assertIn("fills the entire frame, edge to edge", brief)
 
     def test_a_pt_plaque_is_only_asked_for_when_the_card_has_one(self):
         self.assertNotIn("shield-shaped boss", prompts.creative_full(GREEN))
