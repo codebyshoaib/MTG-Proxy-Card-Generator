@@ -150,6 +150,65 @@ def _in_pt_corner(box):
     return (x0 + x1) / 2 > PT_CORNER[0] and (y0 + y1) / 2 > PT_CORNER[1]
 
 
+# WHERE THE SHIELD IS, when the detector does not report one (bd mtg-wfp).
+#
+# The OFFSET from the lowest pale strip's bottom-right corner holds up: measured first over the
+# five stored detections that found a shield, and again over five cards where nothing was reported
+# at all, both come out at about (-0.045,-0.015). The shield sits just inside and just above that
+# corner, which is where the brief asks for it.
+#
+# THE SIZE DOES NOT, AND THE FIRST FIT OF IT WAS BIASED BY CONSTRUCTION. It was taken from those
+# same five DETECTIONS — but `pipeline` only calls `infer_pt` when `detected["pt"]` is absent, so
+# the constant was fitted on the one population it never runs on. Re-measured 2026-08-15 over five
+# cards where detection actually missed, by reading the painted surface off a labelled grid
+# (spikes/measure_pt_shield.py):
+#
+#   detected, n=5     width 0.143 - 0.156     <- what the old 0.152x0.127 was fitted on
+#   undetected, n=5   width 0.067 - 0.130     <- what it is applied to
+#
+# The two do not overlap. The detector finds big shields and misses small ones — which is also the
+# likeliest reason the 35% hit rate never moved for any wording — so the old size was the median of
+# the large tail applied only to the small tail, and it overhung the painted surface on 5 of 5.
+#
+# The statistic is a median but the cost around it is NOT symmetric: `compositor._display` sets the
+# glyphs at half the box height and centres them, so a box smaller than the shield prints a P/T
+# safely inside it, while a box larger than the shield prints one hanging off the edge. When this
+# is next re-measured, err small.
+PT_OFFSET = (-0.046, -0.014)
+PT_SIZE = (0.110, 0.092)
+
+
+def infer_pt(panels):
+    """The box the P/T shield must occupy, or None if there is no strip to anchor to.
+
+    WHY GUESS AT ALL. Detection of this one surface is genuinely unreliable: measured 2026-08-15 by
+    running `detect` repeatedly over the SAME stored blanks, it reported the shield on 7 of 20 runs
+    on cards where the shield is plainly painted — verified by eye. It is not a wording problem.
+    Restating the bullet at length made it worse (4 of 20), and the shield is not being misfiled
+    either: on 7 misses in a row nothing was reported anywhere in that corner. The detector simply
+    does not see it on some images.
+
+    What a miss costs today is not a smaller failure than guessing. `check` fires `missing_pt`, the
+    pipeline burns a full extra image call repainting art that was already correct, and if the
+    repaint misses too the customer gets a CREATURE WITH NO POWER OR TOUGHNESS — an unusable card.
+
+    So the trade is: a card whose P/T lands a few percent off the middle of its shield, against a
+    card missing a printed value it cannot be played without. The residual risk is a model that
+    painted no shield at all, in which case the P/T is printed over artwork — which the compositor
+    strokes and shadows for legibility, and which is still a complete card.
+    """
+    rules = panels.get("rules")
+    if not rules:
+        return None  # nothing to anchor to; leaving it unprinted stays the honest failure
+    lowest = max(rules, key=lambda box: box[3])
+    cx = lowest[2] + PT_OFFSET[0]
+    cy = lowest[3] + PT_OFFSET[1]
+    width, height = PT_SIZE
+    box = (cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
+    # Never off the card, and never into the margin the printer trims (bd mtg-cjx).
+    return tuple(min(0.96, max(0.04, value)) for value in box)
+
+
 def detect(png, paragraphs=None):
     """{'title': box, 'rules': [box, ...], ...} in 0-1 fractions of the canvas.
 

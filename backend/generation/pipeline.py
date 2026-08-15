@@ -147,6 +147,18 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
                 note(f"trimmed a {depth:.1%} painted margin — the brief asked for full bleed")
 
         detected = panels.detect(png, paragraphs=paragraphs)
+        # Before anything grades this: a creature whose shield went undetected gets it placed from
+        # the strip below it (bd mtg-wfp). Done HERE rather than in the compositor so `check` sees
+        # the same card the customer will — otherwise it fires `missing_pt` and burns a repaint on
+        # art that was already right, which is the whole cost of this bug.
+        if face.get("power") is not None and not detected.get("pt"):
+            inferred = panels.infer_pt(detected)
+            if inferred:
+                detected["pt"] = inferred
+                note(
+                    "the P/T shield was not detected — placed at the corner the shield sits in on "
+                    "every card that was measured, rather than repainting a card that is fine"
+                )
         card, overflowed = compositor.compose(
             io.BytesIO(png), face, detected,
             include_flavor_text=options.include_flavor_text,

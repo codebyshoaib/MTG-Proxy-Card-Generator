@@ -92,3 +92,59 @@ class NamedFirstTests(SimpleTestCase):
         miss = gemini.NoImage("no image", finish_reason="STOP")
         with self.assertRaises(gemini.NoImage):
             self._paint([miss, b"png"])
+
+
+class MissingShieldTests(SimpleTestCase):
+    """A creature whose shield went undetected gets it placed instead of costing a repaint.
+
+    bd mtg-wfp. The shield IS painted — confirmed by eye on the stored blanks — and `detect` finds
+    it on 7 of 20 runs over the same fixed images. Every miss used to fire `missing_pt`, burn a
+    full extra image call on art that was already correct, and if the repaint missed too, ship a
+    creature with no power or toughness on it.
+    """
+
+    CREATURE = {**FACE, "power": "4", "toughness": "7"}
+    STRIP = {"rules": [(0.10, 0.68, 0.89, 0.90)]}
+
+    def _run(self, face, detected):
+        seen = {}
+
+        def inspect(_face, panels, _overflowed):
+            seen["panels"] = panels
+            return []
+
+        with mock.patch.object(pipeline, "prepare", return_value=(face, None, False)), \
+                mock.patch.object(pipeline.prompts, "creative_full", return_value="brief"), \
+                mock.patch.object(pipeline.bleed, "trim", side_effect=lambda png: (png, 0.0)), \
+                mock.patch.object(pipeline.check, "matted", return_value=None), \
+                mock.patch.object(pipeline.gemini, "generate", return_value=b"png") as generate, \
+                mock.patch.object(pipeline.panels, "detect", return_value=dict(detected)), \
+                mock.patch.object(
+                    pipeline.compositor, "compose", return_value=(mock.Mock(), False)), \
+                mock.patch.object(pipeline.check, "inspect", side_effect=inspect):
+            pipeline.creative_full(face, attempts=2)
+        return generate, seen["panels"]
+
+    def test_the_grader_sees_the_placed_shield_so_no_repaint_is_burnt(self):
+        """Placed BEFORE `check` runs, deliberately: place it after and the card is still graded
+        `missing_pt` and repainted, which is the entire cost of this bug."""
+        generate, panels_seen = self._run(self.CREATURE, self.STRIP)
+        self.assertIn("pt", panels_seen)
+        self.assertEqual(generate.call_count, 1, "a correct card was repainted anyway")
+
+    def test_a_card_with_no_power_is_left_alone(self):
+        """An instant has no P/T to print, so inventing a shield for it would be a surface with
+        nothing on it — the defect `check.spare` exists to catch."""
+        _, panels_seen = self._run(FACE, self.STRIP)
+        self.assertNotIn("pt", panels_seen)
+
+    def test_a_detected_shield_is_never_overwritten_by_the_guess(self):
+        real = (0.79, 0.83, 0.94, 0.96)
+        _, panels_seen = self._run(self.CREATURE, {**self.STRIP, "pt": real})
+        self.assertEqual(panels_seen["pt"], real)
+
+    def test_with_no_strip_to_anchor_to_the_card_still_fails_honestly(self):
+        """No guess is better than a guess with nothing behind it: P/T stays unprinted, which is
+        visible, rather than being stamped somewhere invented."""
+        _, panels_seen = self._run(self.CREATURE, {"title": (0.05, 0.03, 0.95, 0.11)})
+        self.assertNotIn("pt", panels_seen)
