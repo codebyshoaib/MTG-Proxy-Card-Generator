@@ -1,0 +1,42 @@
+/**
+ * Studio Slate — the product's palette, and the only file that decides what anything looks like.
+ *
+ * Why these values: the whole output of this product is full-colour fantasy artwork across all
+ * five MTG colours, so the chrome has to be a neutral gallery wall. The accent is teal because
+ * it is the one strong colour that is NOT a mana colour — gold reads as card furniture, and
+ * purple reads as black mana, which is a bug the client already reported. Saturation is pulled
+ * back from the stock #2FBFA4 so the call to action stops out-shouting the cards it serves.
+ *
+ * Contrast, measured rather than assumed (WCAG 2.1 AA):
+ *   ink on canvas       16.8:1      ink-soft on raised    5.9:1
+ *   accent on canvas     6.6:1      canvas on accent      6.6:1
+ *   sound on surface     8.6:1      fault on surface      5.6:1
+ *   edge on surface      3.4:1      (1.4.11 — control boundaries, not text)
+ *
+ * `rule` is decorative separation only and is deliberately below 3:1; anything that draws the
+ * boundary of a control uses `edge` instead.
+ */
+@theme {
+  --color-canvas: #0e1013;
+  --color-surface: #161a1f;
+  --color-raised: #1e242b;
+  --color-rule: #2e3742;
+  --color-edge: #616e7c;
+  --color-ink: #edf1f5;
+  --color-ink-soft: #94a0ad;
+  --color-accent: #3fa894;
+  --color-accent-lit: #62c4b0;
+  --color-sound: #63c98d;
+  --color-fault: #e86a6a;
+
+  --font-display: var(--font-space-grotesk), system-ui, sans-serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+
+  --radius-panel: 0.875rem;
+  --radius-control: 0.5rem;
+
+  /* One duration per intent, so nothing is instant and nothing drags (skill §2, §7). */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+}
