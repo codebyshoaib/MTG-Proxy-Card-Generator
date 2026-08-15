@@ -3,18 +3,16 @@
     uv run python manage.py generate_art "Craterhoof Behemoth" --style "dark fantasy oil"
 
 Scryfall resolve -> brief -> one image call -> PNG on disk. This is the whole Art Only mode
-(BUILD-SPEC §3: "Art Only stops after step 3"); the HTTP view is a later wrapper around the
-same three calls.
+(BUILD-SPEC §3: "Art Only stops after step 3"), and `generation.pipeline` holds the flow itself,
+so the HTTP view and this command send the same brief.
 """
 
 import re
 from pathlib import Path
 
-import requests
 from django.core.management.base import BaseCommand, CommandError
 
-from cards import scryfall
-from generation import gemini, prompts
+from generation import gemini, pipeline
 
 
 def _slug(name):
@@ -43,42 +41,21 @@ class Command(BaseCommand):
         )
 
     def handle(self, card, style, out, no_reference, dry_run, direction, palette, **_):
-        found, missing = scryfall.resolve([card])
-        if missing:
-            raise CommandError(f"Scryfall does not know {missing[0]!r}")
-        resolved = found[card]
-        if resolved.layout in scryfall.UNSUPPORTED:
-            raise CommandError(f"{resolved.name}: layout {resolved.layout} is not supported")
+        try:
+            faces = pipeline.faces_of(card)
+        except pipeline.Rejected as rejected:
+            raise CommandError(rejected.detail) from rejected
 
-        for face in scryfall.faces(resolved):
-            original = scryfall.art_reference(face)
-            url, licensed = original.art_crop, original.licensed
-            if no_reference:
-                url = None
-            prompt = prompts.art_only(
-                face,
-                style,
-                reference=bool(url),
-                licensed=licensed,
-                direction=direction,
-                palette=palette,
-            )
+        options = pipeline.Options(
+            art_style=style, art_direction=direction, color_palette=palette,
+            use_original_art_reference=not no_reference,
+        )
+        for face in faces:
+            note = lambda message: self.stdout.write(self.style.WARNING(message))  # noqa: E731
+            prompt, reference = pipeline.art_brief(face, options, note)
             self.stdout.write(f"--- {face['name']} ({face['face_position']})\n{prompt}\n")
-            if licensed:
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"{face['name']} exists only as a licensed crossover. Painting its "
-                        "game identity from the type line, not the character."
-                    )
-                )
             if dry_run:
                 continue
-
-            reference = None
-            if url:
-                response = requests.get(url, headers=scryfall.HEADERS, timeout=30)
-                response.raise_for_status()
-                reference = response.content
 
             png = gemini.generate(prompt, reference)
             out.mkdir(parents=True, exist_ok=True)

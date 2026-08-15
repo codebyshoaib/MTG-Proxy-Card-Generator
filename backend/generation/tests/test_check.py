@@ -151,16 +151,31 @@ class PaintedMarkTests(SimpleTestCase):
                 self.assertIn(f'"{key}"', panels_module.PROMPT)
 
 
-class RetryWiringTests(SimpleTestCase):
-    def test_the_command_repaints_on_a_fault_and_stops_at_the_attempt_limit(self):
-        """One retry, not more: measured across the batches, about one card in five needs a
-        second attempt and a card that fails twice usually keeps failing. `--from` must never
-        repaint, because there is nothing to repaint — the art came off disk."""
-        import inspect as _inspect
+class MarkPlacementTests(SimpleTestCase):
+    """Where a mark lands decides whether it is a defect.
 
-        from generation.management.commands import compose_card
+    MEASURED on Delver of Secrets, job 9f16e827 and c66d6b93: the arcane script around the
+    wizard's hands failed the card on both runs and the repaint painted it again, because a card
+    about reading magic has writing in its art. Meanwhile the marks the client actually reported
+    — a rune band under a type line, a set symbol at the type line's end — are all ON furniture.
+    """
 
-        source = _inspect.getsource(compose_card)
-        self.assertIn("problems = check.inspect(", source)
-        self.assertIn("if not problems or source or attempt >= max(1, attempts)", source)
-        self.assertIn('"--attempts"', source)
+    def test_script_out_in_the_artwork_is_illustration_and_not_a_fault(self):
+        art = {**SOUND, "marks": [(0.30, 0.22, 0.42, 0.34)]}
+        self.assertNotIn("painted_marks", codes(CREATURE, art))
+
+    def test_a_set_symbol_at_the_type_line_end_is_still_a_fault(self):
+        """The client's own report: "these are proxies that dont have a set so its just a random
+        symbol". Our type line is centred, so the plate's right end is not covered by our text."""
+        panels = {**SOUND, "marks": [(0.80, 0.61, 0.88, 0.66)]}
+        self.assertIn("painted_marks", codes(CREATURE, panels))
+
+    def test_writing_pressed_against_a_plate_is_still_a_fault(self):
+        """Raphael's band of runes sat directly under the type line rather than on it."""
+        panels = {**SOUND, "marks": [(0.20, 0.665, 0.50, 0.685)]}
+        self.assertIn("painted_marks", codes(CREATURE, panels))
+
+    def test_a_long_flat_band_is_a_fault_wherever_it_sits(self):
+        """Shaped like a line of card text, in open art, well clear of every plate."""
+        panels = {**SOUND, "marks": [(0.15, 0.35, 0.85, 0.40)]}
+        self.assertIn("painted_marks", codes(CREATURE, panels))

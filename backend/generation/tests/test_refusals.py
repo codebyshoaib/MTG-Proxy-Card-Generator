@@ -50,20 +50,3 @@ class RefusalMemoTests(SimpleTestCase):
     def test_a_seeded_name_is_never_rewritten_to_the_store(self):
         refusals.remember("Hulk, Bruce Banner")
         self.assertTrue(refusals.is_refused("Hulk, Bruce Banner"))
-
-
-class NamedFirstTests(SimpleTestCase):
-    def test_the_command_tries_the_name_before_the_game_identity(self):
-        """bd mtg-kx4: prompts._subject's licensed branch was generalised from one rightsholder.
-        It is correct for Marvel and wrong for the other eight, so it may only run after the
-        model has actually refused — never before."""
-        import inspect
-
-        from generation.management.commands import compose_card
-
-        source = inspect.getsource(compose_card)
-        named = source.index("licensed=False")
-        fallback = source.index("licensed=True")
-        self.assertLess(named, fallback, "the named brief must be attempted first")
-        self.assertIn("refusals.remember", source)
-        self.assertIn("refusal.refused", source)

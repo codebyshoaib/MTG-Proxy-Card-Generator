@@ -2,9 +2,8 @@
 
     uv run python manage.py compose_card "Terror of the Peaks" --style dark_fantasy
 
-Scryfall resolve -> one image call for art and blank furniture -> one vision call for the
-surface boxes -> composite Scryfall's own text into them -> check the result is structurally
-sound, and repaint once if it is not.
+The flow itself lives in `generation.pipeline`, which the HTTP API calls too — this command is
+the same three calls with somewhere to print to and two debug switches the API has no use for.
 
 `--from` skips the image call and composites onto a card already on disk, which is what to use
 while tuning the compositor: it costs nothing and keeps the layout the same between runs.
@@ -13,25 +12,18 @@ Every option is named for the reference site's own POST /api/ai-proxies/generate
 frontend or an API layer maps one-to-one with no translation table in between.
 """
 
-import io
 import re
 from pathlib import Path
 
-import requests
 from django.core.management.base import BaseCommand, CommandError
 from PIL import ImageDraw
 
-from cards import compositor, scryfall
-from generation import check, gemini, panels, prompts, refusals
+from cards import compositor
+from generation import panels, pipeline
 
 
 def _slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def io_bytes(png):
-    """PNG bytes as something Image.open accepts."""
-    return io.BytesIO(png)
 
 
 class Command(BaseCommand):
@@ -75,147 +67,59 @@ class Command(BaseCommand):
         self, card, style, out, source, boxes, direction, palette, notes, flavor,
         use_reference, attempts, borderless, **_,
     ):
-        found, missing = scryfall.resolve([card])
-        if missing:
-            raise CommandError(f"Scryfall does not know {missing[0]!r}")
-        resolved = found[card]
-        if resolved.layout in scryfall.UNSUPPORTED:
-            raise CommandError(f"{resolved.name}: layout {resolved.layout} is not supported")
+        try:
+            faces = pipeline.faces_of(card)
+        except pipeline.Rejected as rejected:
+            raise CommandError(rejected.detail) from rejected
 
+        options = pipeline.Options(
+            art_style=style, art_direction=direction, color_palette=palette, custom_art_notes=notes,
+            include_flavor_text=flavor, use_original_art_reference=use_reference,
+            borderless=borderless,
+        )
         out.mkdir(parents=True, exist_ok=True)
-        for face in scryfall.faces(resolved):
+        for face in faces:
             suffix = "" if face["face_position"] == "SINGLE" else f"-{face['face_position'].lower()}"
             stem = f"{_slug(face['name'])}{suffix}"
-            face, reference, licensed = self._prepare(face, use_reference)
 
-            attempt, problems = 0, []
-            while True:
-                attempt += 1
-                png = (
-                    source.read_bytes()
-                    if source
-                    else self._paint(
-                        face, licensed, reference, style, direction, palette, notes, borderless
-                    )
-                )
-                if not source:
-                    (out / f"{stem}-blank.png").write_bytes(png)
+            result = pipeline.creative_full(
+                face, options,
+                attempts=attempts,
+                source=source.read_bytes() if source else None,
+                note=lambda message: self.stdout.write(self.style.WARNING(f"  {message}")),
+            )
+            if result.blank:
+                (out / f"{stem}-blank.png").write_bytes(result.blank)
 
-                # The ability count is a hint for how many pale strips to look for — the brief
-                # asks for one, so a second is worth knowing about rather than assuming.
-                oracle = face.get("oracle_text") or ""
-                detected = panels.detect(
-                    png, paragraphs=len([p for p in oracle.split("\n") if p.strip()]) or None
-                )
-                card_image, overflowed = compositor.compose(
-                    io_bytes(png), face, detected, include_flavor_text=flavor
-                )
-                problems = check.inspect(face, detected, overflowed)
-
-                # Where, not just whether. Across a batch the failure that matters is a surface
-                # landing in the wrong place, and that is invisible in a list of keys.
-                self.stdout.write(f"{face['name']}: " + self._where(detected))
-                if not problems or source or attempt >= max(1, attempts):
-                    break
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"  attempt {attempt}: "
-                        + "; ".join(problem.detail for problem in problems)
-                        + " — repainting"
-                    )
-                )
-
-            for problem in problems:
+            # Where, not just whether. Across a batch the failure that matters is a surface
+            # landing in the wrong place, and that is invisible in a list of keys.
+            self.stdout.write(f"{face['name']}: " + self._where(result.detected))
+            for problem in result.problems:
                 self.stdout.write(self.style.ERROR(f"  UNSOUND [{problem.code}] {problem.detail}"))
 
             path = out / f"{stem}.png"
-            card_image.convert("RGB").save(path)
-            report = self.style.WARNING if problems else self.style.SUCCESS
+            result.card.convert("RGB").save(path)
+            report = self.style.WARNING if result.problems else self.style.SUCCESS
             self.stdout.write(report(f"{path}"))
 
             if boxes:
-                debug = card_image.copy()
-                drawer = ImageDraw.Draw(debug)
-                for key, panel in detected.items():
-                    strips = compositor._rules_panels(panel) if key in panels.LISTS else [panel]
-                    # The two fault keys are drawn too, and in red: when a card is repainted for a
-                    # spare surface or a painted set symbol, the first thing to check is whether
-                    # the detector was right about it.
-                    colour = (255, 40, 40) if key in panels.FAULTS else (255, 0, 255)
-                    for index, one in enumerate(strips):
-                        x0, y0, x1, y1 = compositor._box(one, debug.size)
-                        drawer.rectangle((x0, y0, x1, y1), outline=colour, width=6)
-                        label = f"{key}{index + 1}" if len(strips) > 1 else key
-                        drawer.text((x0 + 10, y0 + 10), label, fill=colour)
-                debug.convert("RGB").save(out / f"{stem}-boxes.png")
+                self._boxes(result, out / f"{stem}-boxes.png")
 
-    def _prepare(self, face, use_reference):
-        """(face, reference bytes, licensed) — the Scryfall side, done once per card.
-
-        Outside the retry loop deliberately: repainting must not re-download the art or re-ask
-        Scryfall which printing to use.
-        """
-        original = scryfall.art_reference(face)
-        url, licensed = original.art_crop, original.licensed
-        # The flavour text has to come from the same printing the art does. `resolve()` answers a
-        # bare name with the NEWEST printing, which since June 2026 is a licensed crossover for a
-        # lot of staples, while `art_reference()` deliberately goes back to the oldest
-        # non-crossover one. Left unreconciled, `--flavor` printed Christopher Rush's Alpha
-        # Lightning Bolt under flavour text reading "...speaks The Mighty Thor!" — one card
-        # wearing two printings.
-        if face["is_crossover"] and not licensed:
-            face = {**face, "flavor_text": original.flavor_text}
-        if not use_reference:
-            url = None
-        reference = None
-        if url:
-            response = requests.get(url, headers=scryfall.HEADERS, timeout=30)
-            response.raise_for_status()
-            reference = response.content
-        return face, reference, licensed
-
-    def _paint(self, face, licensed, reference, style, direction, palette, notes, borderless=True):
-        """One image call: the card's art and its blank furniture, as PNG bytes.
-
-        Tries the card's own NAME first and falls back to its game identity only once the model
-        has actually refused (bd mtg-kx4). Measured on ten licensed-only cards: eight painted the
-        real character first try and only the two Marvel ones were refused, so treating every
-        crossover as unpaintable loses the likeness the client asked for on eight of them. The
-        reference site's gallery agrees — its Raphael, Gimli, Sephiroth and Y'shtola are all named
-        and all at full likeness, and in 3265 cards it holds no Marvel card at all.
-        """
-        attach = bool(reference)
-        if not (licensed and refusals.is_refused(face["name"])):
-            try:
-                return gemini.generate(
-                    prompts.creative_full(
-                        face, style, reference=attach, licensed=False,
-                        direction=direction, palette=palette, notes=notes,
-                        borderless=borderless,
-                    ),
-                    reference,
-                )
-            except gemini.NoImage as refusal:
-                # A refusal repeats for this prompt forever, so the only useful response is a
-                # different prompt. A transient miss is neither remembered nor retried here: it
-                # costs the same generation either way and the caller can run the command again.
-                if not (licensed and refusal.refused):
-                    raise
-                refusals.remember(face["name"])
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"  {face['name']}: refused under its own name "
-                        f"({refusal.finish_reason}) — repainting from the card's game identity "
-                        "instead. Remembered, so this is paid once."
-                    )
-                )
-        return gemini.generate(
-            prompts.creative_full(
-                face, style, reference=attach, licensed=True,
-                direction=direction, palette=palette, notes=notes,
-            ),
-            reference,
-        )
+    def _boxes(self, result, path):
+        debug = result.card.copy()
+        drawer = ImageDraw.Draw(debug)
+        for key, panel in result.detected.items():
+            strips = compositor._rules_panels(panel) if key in panels.LISTS else [panel]
+            # The two fault keys are drawn too, and in red: when a card is repainted for a spare
+            # surface or a painted set symbol, the first thing to check is whether the detector
+            # was right about it.
+            colour = (255, 40, 40) if key in panels.FAULTS else (255, 0, 255)
+            for index, one in enumerate(strips):
+                x0, y0, x1, y1 = compositor._box(one, debug.size)
+                drawer.rectangle((x0, y0, x1, y1), outline=colour, width=6)
+                label = f"{key}{index + 1}" if len(strips) > 1 else key
+                drawer.text((x0 + 10, y0 + 10), label, fill=colour)
+        debug.convert("RGB").save(path)
 
     def _where(self, detected):
         """Every detected surface and where it landed, for reading a batch at a glance."""
