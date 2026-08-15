@@ -5,6 +5,7 @@ that each was caught only because a human happened to be looking at the output.
 """
 
 from django.test import SimpleTestCase
+from PIL import Image
 
 from generation import check, panels as panels_module
 
@@ -29,6 +30,51 @@ class SoundCardTests(SimpleTestCase):
     def test_a_spell_needs_no_power_toughness_surface(self):
         panels = {k: v for k, v in SOUND.items() if k != "pt"}
         self.assertEqual(check.inspect(SPELL, panels, False), [])
+
+
+class PanelContrastTests(SimpleTestCase):
+    """A panel too dark for the text printed on it (bd mtg-cjx).
+
+    MEASURED on the eight-card Ice batch, job 10746c0b — the first run of the acceptance test the
+    bead asks for, which is to look at the finished card at arm's length and read it. All eight
+    graded sound; three were not readable. Terror of the Peaks measured 3.6:1, Lightning Bolt
+    4.5:1, Giant Growth 5.0:1, against 9.4-12.3:1 for the five that read cleanly.
+    """
+
+    def _card(self, panel_value, size=(179, 240)):
+        """A dark card with one strip of `panel_value` where SOUND puts the rules panel."""
+        card = Image.new("RGB", size, (20, 20, 20))
+        box = SOUND["rules"][0]
+        card.paste(
+            (panel_value, panel_value, panel_value),
+            (
+                int(box[0] * size[0]), int(box[1] * size[1]),
+                int(box[2] * size[0]), int(box[3] * size[1]),
+            ),
+        )
+        return card
+
+    def test_a_pale_parchment_panel_passes(self):
+        """L=200 is where the five readable cards landed."""
+        self.assertIsNone(check.contrast(self._card(200), SOUND))
+
+    def test_a_lava_coloured_panel_is_reported(self):
+        """L=110 is Terror of the Peaks, which graded sound and could not be read."""
+        problem = check.contrast(self._card(110), SOUND)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "panel_too_dark")
+
+    def test_a_card_with_no_rules_panel_reports_only_the_missing_panel(self):
+        """`missing_rules` already says this; two codes for one fault helps nobody."""
+        self.assertIsNone(check.contrast(self._card(200), {k: v for k, v in SOUND.items()
+                                                          if k != "rules"}))
+
+    def test_the_darkest_strip_decides_a_multi_strip_card(self):
+        """A card is only as readable as its worst paragraph."""
+        card = self._card(200)
+        card.paste((90, 90, 90), (20, 200, 160, 220))
+        panels = {**SOUND, "rules": [SOUND["rules"][0], (0.11, 0.83, 0.89, 0.92)]}
+        self.assertEqual(check.contrast(card, panels).code, "panel_too_dark")
 
 
 class MissingSurfaceTests(SimpleTestCase):

@@ -9,6 +9,7 @@ first. Both are now driven with fakes instead, so they hold wherever the code si
 from unittest import mock
 
 from django.test import SimpleTestCase
+from PIL import Image
 
 from generation import check, gemini, pipeline
 
@@ -35,7 +36,10 @@ class RepaintTests(SimpleTestCase):
                 mock.patch.object(pipeline.gemini, "generate", return_value=b"png") as generate, \
                 mock.patch.object(pipeline.panels, "detect", return_value={}), \
                 mock.patch.object(
-                    pipeline.compositor, "compose", return_value=(mock.Mock(), False)), \
+                    pipeline.compositor, "compose",
+                    # A real image, not a Mock: `check.contrast` reads the composited card, and a
+                    # pale one keeps these tests about their own subject rather than the panel.
+                    return_value=(Image.new("RGB", (179, 240), (205, 200, 190)), False)), \
                 mock.patch.object(pipeline.check, "inspect", return_value=problems):
             result = pipeline.creative_full(FACE, **kwargs)
         return generate, result
@@ -120,7 +124,10 @@ class MissingShieldTests(SimpleTestCase):
                 mock.patch.object(pipeline.gemini, "generate", return_value=b"png") as generate, \
                 mock.patch.object(pipeline.panels, "detect", return_value=dict(detected)), \
                 mock.patch.object(
-                    pipeline.compositor, "compose", return_value=(mock.Mock(), False)), \
+                    pipeline.compositor, "compose",
+                    # A real image, not a Mock: `check.contrast` reads the composited card, and a
+                    # pale one keeps these tests about their own subject rather than the panel.
+                    return_value=(Image.new("RGB", (179, 240), (205, 200, 190)), False)), \
                 mock.patch.object(pipeline.check, "inspect", side_effect=inspect):
             pipeline.creative_full(face, attempts=2)
         return generate, seen["panels"]

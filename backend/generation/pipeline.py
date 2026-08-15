@@ -168,6 +168,10 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
             include_flavor_text=options.include_flavor_text,
         )
         problems = check.inspect(face, detected, overflowed)
+        # Both read the composited card rather than the geometry, which is why they sit here and
+        # not in `inspect`. Contrast applies to every layout: a panel too dark for its own text is
+        # unreadable whether or not the card runs to the edge.
+        problems += [problem for problem in [check.contrast(card, detected)] if problem]
         if options.borderless:
             problems += [problem for problem in [check.matted(card)] if problem]
         if not problems or source or attempt >= max(1, attempts):

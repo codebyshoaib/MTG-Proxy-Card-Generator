@@ -212,6 +212,71 @@ def _offending_marks(panels):
     return offenders
 
 
+CONTRAST_MIN = 5.0
+"""Contrast ratio the rules panel must give the near-black text printed on it.
+
+MEASURED on the eight-card Ice batch, job 10746c0b (2026-08-15) — the first time anyone ran bd
+mtg-cjx's acceptance test, which is to look at a finished card at arm's length and try to read it:
+
+    Elesh Norn 12.3   Sol Ring 11.1   Swords 10.7   Vampiric Tutor 9.9   Counterspell 9.4
+    Giant Growth 5.0        Lightning Bolt 4.5        Terror of the Peaks 3.6
+
+All eight graded SOUND. The five above 9 are readable across a table; Terror and Bolt are not,
+and Giant Growth is borderline. So the structural checks were passing cards whose rules text
+cannot be read, which is the one defect that makes a proxy useless at the thing it is for.
+
+The split is clean and it has a cause: the brief's list of LIGHT materials for the broad strip
+includes "glowing amber stone", the only mid-value entry among cream parchment, bleached bone and
+aged ivory. On a red or green card the model reaches for the amber because it matches the scene,
+and the slab lands near L=110-133 instead of 185-210. The wording is fixed alongside this, but a
+prompt is a request and this is a measurement — the same reason `matted` exists.
+
+5.0 sits in the gap between the two clusters rather than at a standards number. WCAG's 4.5 is for
+a backlit screen at reading distance; a printed card read across a table is a harder case, and
+the measured cards either clear 9 or fail. Anything landing between is worth a repaint.
+"""
+
+
+def _luminance(value):
+    """sRGB channel 0-255 to its linear contribution, per WCAG."""
+    channel = value / 255
+    return channel / 12.92 if channel <= 0.03928 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+def contrast(card, panels, ink=20):
+    """The rules panel too dark for the text printed on it, or None.
+
+    `ink` is the near-black the compositor prints at. Measured on the panel the DETECTOR reported
+    rather than on the whole card, so a dark scene around a pale slab does not fail a good card.
+    """
+    strips = _strips(panels.get("rules"))
+    if not strips:
+        return None  # `missing_rules` already covers this; two codes for one fault helps nobody.
+    grey = card.convert("L")
+    width, height = grey.size
+    worst = None
+    for strip in strips:
+        box = (
+            int(strip[0] * width), int(strip[1] * height),
+            int(strip[2] * width), int(strip[3] * height),
+        )
+        if box[2] <= box[0] or box[3] <= box[1]:
+            continue
+        pixels = grey.crop(box).getdata()
+        mean = sum(pixels) / len(pixels)
+        ratio = (_luminance(mean) + 0.05) / (_luminance(ink) + 0.05)
+        worst = ratio if worst is None else min(worst, ratio)
+    if worst is None or worst >= CONTRAST_MIN:
+        return None
+    return Problem(
+        "panel_too_dark",
+        # Two decimals because one rounds a card sitting just under the floor to the floor itself,
+        # and "only 5.0:1, below 5.0:1" reads as a broken check rather than a near miss.
+        f"the rules panel gives its text only {worst:.2f}:1 contrast — below {CONTRAST_MIN}:1 the "
+        "text stops being readable at arm's length, which is what a proxy is for",
+    )
+
+
 def matted(card):
     """A mat the trim could not cut, or None.
 
