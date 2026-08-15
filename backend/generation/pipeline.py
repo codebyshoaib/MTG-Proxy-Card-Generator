@@ -111,7 +111,11 @@ def art_brief(face, options=Options(), note=_noop):
 
 
 def art(face, options=Options(), note=_noop):
-    """Art Only: one image call, PNG bytes out. BUILD-SPEC §3 — it stops after step 3."""
+    """Art Only: one image call, encoded image bytes out. BUILD-SPEC §3 — it stops after step 3.
+
+    The format is the model's, not ours — measured JPEG, not PNG. Anything writing these to a
+    named file has to re-encode; `jobs._write_png` is what does it.
+    """
     prompt, reference = art_brief(face, options, note)
     return gemini.generate(prompt, reference)
 

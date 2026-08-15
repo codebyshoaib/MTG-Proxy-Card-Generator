@@ -1,5 +1,6 @@
 """The worker, run inline. `start()`'s thread is not under test; what it runs is."""
 
+import io
 import json
 import tempfile
 import threading
@@ -8,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from django.test import TestCase, TransactionTestCase, override_settings
+from PIL import Image
 
 from generation import jobs
 from generation.models import Job
@@ -87,14 +89,24 @@ class RunTests(TestCase):
         self.assertEqual(job.results[0]["status"], "unsound")
         self.assertEqual(job.results[0]["problems"][0]["code"], "PLATE_ORDER")
 
-    def test_art_only_writes_the_png_the_model_returned(self):
-        with mock.patch.object(jobs.pipeline, "art", return_value=b"PNG BYTES") as art:
+    def test_art_only_writes_a_real_png_from_the_models_jpeg(self):
+        """The model returns JPEG. A file called `.png` has to BE a PNG.
+
+        MEASURED on job ac1c537c, the first Art Only run through the UI: `file` reported the
+        written `lightning-bolt.png` as JPEG, and it was served as `image/png`. Browsers sniff
+        past it, which is why this survived — the download is the deliverable, so the format has
+        to match the name.
+        """
+        jpeg = io.BytesIO()
+        Image.new("RGB", (8, 11), "red").save(jpeg, format="JPEG")
+
+        with mock.patch.object(jobs.pipeline, "art", return_value=jpeg.getvalue()) as art:
             jobs.run(_job("ART_ONLY").pk)
 
         job = Job.objects.get()
         self.assertEqual(art.call_count, 2)
         written = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt.png"
-        self.assertEqual(written.read_bytes(), b"PNG BYTES")
+        self.assertEqual(Image.open(written).format, "PNG")
 
 
 class ConcurrencyTests(TransactionTestCase):

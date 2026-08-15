@@ -5,6 +5,7 @@
 # user's deck is in flight — swap in Celery/RQ behind `start()` when that day comes.
 """
 
+import io
 import os
 import re
 import threading
@@ -13,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from django.conf import settings
 from django.db import connection
+from PIL import Image
 
 from generation import pipeline
 from generation.models import Job
@@ -40,6 +42,19 @@ _results = threading.Lock()
 
 def _slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+
+def _write_png(path, data):
+    """Model bytes under a `.png` name, re-encoded so the file is what the name claims.
+
+    MEASURED on the first Art Only run through the UI (job ac1c537c, 2026-08-15): Gemini returns
+    **JPEG**, and writing it straight through produced a `lightning-bolt.png` that `file` calls
+    JPEG, served as `Content-Type: image/png`. Browsers sniff and render it, so nothing looked
+    wrong — but "Download full resolution" is the Art Only deliverable, and handing a print shop a
+    mislabelled file is a bug found at the printer. Creative Full never had this: it saves through
+    PIL, which writes the format the extension names.
+    """
+    Image.open(io.BytesIO(data)).save(path)
 
 
 def start(job):
@@ -111,7 +126,7 @@ def _face(job_id, mode, options, directory, entry, face):
     try:
         name = _file_stem(face)
         if mode == "ART_ONLY":
-            (directory / f"{name}.png").write_bytes(pipeline.art(face, options, note=log.append))
+            _write_png(directory / f"{name}.png", pipeline.art(face, options, note=log.append))
             problems, panels = [], None  # Art Only paints no furniture, so there is none to detect
         else:
             result = pipeline.creative_full(face, options, note=log.append)
@@ -129,6 +144,10 @@ def _face(job_id, mode, options, directory, entry, face):
             # it is the half that actually answers the question.
             panels = result.detected
             if problems and result.blank:
+                # Raw, unlike the Art Only deliverable: the blank is evidence we read with PIL,
+                # which sniffs the content and ignores the extension. Re-encoding it would put a
+                # decode between a faulty card and its own post-mortem — the one moment the bytes
+                # may be malformed is exactly when this file matters.
                 (directory / f"{name}-blank.png").write_bytes(result.blank)
         _append(job_id, {
             "name": face["name"],
