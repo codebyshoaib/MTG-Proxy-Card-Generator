@@ -101,6 +101,9 @@ def generate(request):
 
 @api_view(["GET"])
 def job_status(_request, job_id):
+    # A restart leaves the row saying `running` with no worker behind it, and the frontend polls a
+    # dead job forever. This is the moment the answer matters, so it is the moment to check.
+    jobs.reap()
     return Response(_job(get_object_or_404(Job, pk=job_id)))
 
 

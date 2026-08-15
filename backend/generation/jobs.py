@@ -43,13 +43,44 @@ def _slug(name):
 
 
 def start(job):
+    # Stamped HERE, on the request thread, and not inside `run` — `run` is on a worker thread, so
+    # between `start()` returning and it getting scheduled the row would sit QUEUED with no pid,
+    # and a poll landing in that window would `reap` a job that had just been accepted.
+    Job.objects.filter(pk=job.pk).update(worker_pid=os.getpid())
     threading.Thread(target=run, args=(job.pk,), daemon=True).start()
+
+
+def reap():
+    """Fail any job a restart orphaned. Returns how many.
+
+    The pool is in-process, so a job can only be running inside the process that claimed it. A row
+    that says `running` and names a different pid has no worker behind it and never will — before
+    this it stayed `running` forever and the frontend polled it forever (bd mtg-57t).
+
+    Called when someone asks about a job rather than at startup: it needs no app-loading hook, it
+    cannot run during migrations, and the only moment the answer matters is when it is being read.
+    Assumes one server process, which is what the in-process pool already assumes.
+    """
+    # A NULL pid means never claimed, not abandoned — every job `start()` accepts is stamped on
+    # the request thread before the worker exists, so a real orphan always carries one. Reaping
+    # NULLs instead would fail any row created by hand, which is what a fixture is.
+    orphans = (
+        Job.objects.filter(status__in=[Job.QUEUED, Job.RUNNING])
+        .exclude(worker_pid__isnull=True)
+        .exclude(worker_pid=os.getpid())
+    )
+    return orphans.update(
+        status=Job.FAILED,
+        error="the server restarted while this job was running, so it was abandoned. "
+        "Nothing is left of it but the cards that had already finished — generate again.",
+    )
 
 
 def run(job_id):
     job = Job.objects.get(pk=job_id)
     job.status = Job.RUNNING
-    job.save(update_fields=["status"])
+    job.worker_pid = os.getpid()
+    job.save(update_fields=["status", "worker_pid"])
     options = pipeline.Options(**job.options)
     directory = settings.MEDIA_ROOT / "generated" / str(job.pk)
     directory.mkdir(parents=True, exist_ok=True)
@@ -81,11 +112,24 @@ def _face(job_id, mode, options, directory, entry, face):
         name = _file_stem(face)
         if mode == "ART_ONLY":
             (directory / f"{name}.png").write_bytes(pipeline.art(face, options, note=log.append))
-            problems = []
+            problems, panels = [], None  # Art Only paints no furniture, so there is none to detect
         else:
             result = pipeline.creative_full(face, options, note=log.append)
             result.card.convert("RGB").save(directory / f"{name}.png")
             problems = [{"code": p.code, "detail": p.detail} for p in result.problems]
+            # KEEP THE EVIDENCE ON A CARD THAT CAME BACK WRONG (bd mtg-57t). The blank and the
+            # boxes are already in hand — `pipeline` returns both — and throwing them away is what
+            # made every post-mortem cost a fresh paid generation. On 2026-08-15 that stopped a
+            # diagnosis dead: two cards tripped `text_too_small` and there was no way to tell
+            # whether the model under-painted the strip or `panels.detect` under-reported it, which
+            # need opposite fixes.
+            #
+            # Only when it is unsound, because the blank is ~9MB a face and a card that graded
+            # clean has nothing to investigate. `panels` is small enough to keep either way, and
+            # it is the half that actually answers the question.
+            panels = result.detected
+            if problems and result.blank:
+                (directory / f"{name}-blank.png").write_bytes(result.blank)
         _append(job_id, {
             "name": face["name"],
             "quantity": entry["quantity"],
@@ -94,6 +138,14 @@ def _face(job_id, mode, options, directory, entry, face):
             "problems": problems,
             "log": log,
             "seconds": round(time.monotonic() - started, 1),
+            # What the vision pass reported, normalised 0-1: the only record of what the model
+            # actually painted, and what every panel-geometry bug is argued from.
+            "panels": panels,
+            "blank": (
+                f"{settings.MEDIA_URL}generated/{job_id}/{name}-blank.png"
+                if problems and mode != "ART_ONLY"
+                else None
+            ),
         })
     except Exception as failure:  # noqa: BLE001 — one bad card must not sink the deck
         _append(job_id, {

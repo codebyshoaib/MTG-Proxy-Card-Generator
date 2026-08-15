@@ -1,5 +1,6 @@
 """The worker, run inline. `start()`'s thread is not under test; what it runs is."""
 
+import json
 import tempfile
 import threading
 import time
@@ -136,3 +137,98 @@ class ConcurrencyTests(TransactionTestCase):
         self.assertGreater(max(peak), 1, "faces were painted one at a time")
         self.assertLess(elapsed, 0.15 * 4, "the wall clock is still the sum of the faces")
         self.assertEqual(Job.objects.get(pk=job.pk).status, Job.DONE)
+
+
+class KeepTheEvidenceTests(TestCase):
+    """A card that came back wrong keeps what is needed to work out why (bd mtg-57t).
+
+    On 2026-08-15 two cards tripped `text_too_small` through the UI and the post-mortem stopped
+    dead: there was no way to tell whether the model under-painted the strip or `panels.detect`
+    under-reported it, which need opposite fixes. `pipeline` already hands both back — the blank
+    and the detected boxes — and the worker was throwing them away, so every diagnosis cost a
+    fresh paid generation and still ended in a guess.
+    """
+
+    def setUp(self):
+        workers = mock.patch.object(jobs, "WORKERS", 1)
+        workers.start()
+        self.addCleanup(workers.stop)
+        self.media = tempfile.TemporaryDirectory()
+        self.addCleanup(self.media.cleanup)
+        self.settings_ = override_settings(MEDIA_ROOT=Path(self.media.name))
+        self.settings_.enable()
+        self.addCleanup(self.settings_.disable)
+
+    BOXES = {"title": (0.05, 0.03, 0.95, 0.11), "rules": [(0.06, 0.65, 0.94, 0.90)]}
+    # The row is JSON, so tuples come back as lists. Compare against what a round trip gives.
+    STORED = json.loads(json.dumps(BOXES))
+
+    def _run(self, problems):
+        from generation import check
+
+        result = jobs.pipeline.Result(mock.Mock(), problems, self.BOXES, b"the-blank-png")
+        with mock.patch.object(jobs.pipeline, "creative_full", return_value=result):
+            jobs.run(_job().pk)
+        return Job.objects.get()
+
+    def test_an_unsound_card_keeps_its_blank_and_its_boxes(self):
+        from generation.check import Problem
+
+        job = self._run([Problem("text_too_small", "too small")])
+        blank = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt-blank.png"
+        self.assertTrue(blank.exists(), "the blank is the only record of what was painted")
+        self.assertEqual(blank.read_bytes(), b"the-blank-png")
+        self.assertEqual(job.results[0]["panels"], self.STORED)
+        self.assertEqual(job.results[0]["blank"], f"/media/generated/{job.pk}/lightning-bolt-blank.png")
+
+    def test_a_sound_card_keeps_its_boxes_but_not_9mb_of_blank(self):
+        """The boxes answer the question and cost nothing; the blank is ~9MB a face and a card
+        that graded clean has nothing to investigate."""
+        job = self._run([])
+        blank = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt-blank.png"
+        self.assertFalse(blank.exists())
+        self.assertIsNone(job.results[0]["blank"])
+        self.assertEqual(job.results[0]["panels"], self.STORED, "the boxes are kept either way")
+
+
+class ReapTests(TestCase):
+    """A restart leaves a row saying `running` with nothing behind it, and the frontend polls it
+    forever. The pool is in-process, so 'is anyone working on this' is exactly 'is it this
+    process' (bd mtg-57t)."""
+
+    def test_a_job_left_running_by_another_process_is_failed(self):
+        job = _job()
+        Job.objects.filter(pk=job.pk).update(status=Job.RUNNING, worker_pid=999_999)
+        self.assertEqual(jobs.reap(), 1)
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.FAILED)
+        self.assertIn("restarted", job.error)
+
+    def test_this_process_s_own_running_job_is_left_alone(self):
+        import os
+
+        job = _job()
+        Job.objects.filter(pk=job.pk).update(status=Job.RUNNING, worker_pid=os.getpid())
+        self.assertEqual(jobs.reap(), 0)
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.RUNNING)
+
+    def test_a_job_nobody_has_claimed_is_not_reaped(self):
+        """A NULL pid means never claimed, not abandoned. Reaping those would fail any row made by
+        hand — which is what every fixture is, and what broke the polling test first time."""
+        job = _job()
+        Job.objects.filter(pk=job.pk).update(status=Job.RUNNING, worker_pid=None)
+        self.assertEqual(jobs.reap(), 0)
+        job.refresh_from_db()
+        self.assertEqual(job.status, Job.RUNNING)
+
+    def test_start_stamps_the_pid_before_the_worker_exists(self):
+        """Stamped on the request thread, not inside `run`. Otherwise a poll landing between
+        `start()` returning and the worker being scheduled reaps a job just accepted."""
+        import os
+
+        job = _job()
+        with mock.patch.object(jobs.threading, "Thread"):  # never actually run the work
+            jobs.start(job)
+        job.refresh_from_db()
+        self.assertEqual(job.worker_pid, os.getpid())

@@ -20,6 +20,13 @@ class Job(models.Model):
     status = models.CharField(max_length=10, default=QUEUED)
     error = models.TextField(blank=True, default="")
 
+    # The OS process running this job. The worker is an in-process thread pool (`generation.jobs`),
+    # so a job can only be running inside the process that started it — which makes this the whole
+    # test for "is anyone still working on this": a row that says `running` and names a different
+    # process was orphaned by a restart, and nothing was ever going to finish it. Before this, such
+    # a row said `running` forever and the frontend polled it forever (bd mtg-57t).
+    worker_pid = models.IntegerField(null=True, blank=True)
+
     # Everything the confirm screen needs, decided from Scryfall before a single credit is spent:
     # what we will generate, what Scryfall does not know, and what layout we do not support.
     cards = models.JSONField(default=list)
