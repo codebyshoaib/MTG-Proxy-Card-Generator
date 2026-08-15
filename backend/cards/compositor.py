@@ -49,6 +49,22 @@ RULES_SIZE = 0.055
 # a false positive that costs a regeneration: measured against the reference site's own cards,
 # their rules text runs at pitch/cardH 0.031 and ours at that size runs at 0.0304, i.e. their
 # cards would trip the old floor too. The floor has to sit BELOW the look we are matching.
+#
+# VALIDATED 2026-08-15 (bd mtg-8h9, spikes/measure_rules_size.py) against n=40 real printed
+# 2015-frame cards spanning 13-336 oracle characters, measured off Scryfall's own 745x1040 PNGs by
+# pixel projection. The comparable is LINE PITCH as a fraction of card height, not font size: real
+# cards are set in Plantin and we ship PT Serif, whose x-height per em differs, so equal font sizes
+# are not equally readable.
+#
+#   this floor            2.625%   (48px on a 2400px card)
+#   smallest real card    2.788%   The One Ring, 305 chars, 7 lines = 1.06x this floor
+#   median real card      3.317%
+#   0 of 40 real printings set their rules text below it.
+#
+# So the guess was right to within 6% of the tightest thing Wizards prints. DO NOT RETUNE IT to
+# make failing cards pass — a card that trips it is genuinely below anything a real printing uses,
+# and the defect is upstream: the surface the model painted is too short for the text.
+# `prompts._strip_height` is what asks for a surface big enough, using the same measurement.
 RULES_MIN = 0.020
 
 # NO LINE SPREADING. Tried 2026-08-10 to fill a strip the text did not reach the bottom of, and
@@ -486,7 +502,13 @@ def _rules(image, text, boxes, shield=None, light=(1, 1), flavour=""):
             (max(0, e[0] - lh), e[1]) if e else None
             for e, (_, lh, _) in zip(excludes, laid)
         ]
-        size, laid = textlayout.fit_across(paragraphs, inner, ceiling, excludes=excludes)
+        # `flavours` has to come along: this re-fit's `laid` is what actually gets DRAWN, and
+        # dropping it here printed no flavour text at all on any creature whose P/T shield
+        # overlaps its rules panel — which on a borderless card is the normal layout, not an edge
+        # case (bd mtg-4qa). Silent, because the card still looked finished.
+        size, laid = textlayout.fit_across(
+            paragraphs, inner, ceiling, excludes=excludes, flavours=flavours
+        )
 
     overflowed = size < image.height * RULES_MIN
     for box, (pad_x, pad_y), (width, height), (lines, lh, pip_px) in zip(boxes, pads, inner, laid):

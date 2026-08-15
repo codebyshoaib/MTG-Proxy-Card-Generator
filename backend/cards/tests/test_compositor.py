@@ -260,6 +260,53 @@ class FlavourTextTests(SimpleTestCase):
 
     FLAVOURED = {**FACE, "flavor_text": "The peaks remember every name they have burned."}
     PANEL = {"rules": [(0.06, 0.60, 0.94, 0.94)]}
+    # The same panel with a P/T shield hanging off its bottom-right, which is what the borderless
+    # brief actually produces (bd mtg-wfp measured that geometry from the other side). This is the
+    # layout that makes `_rules` take its exclusion re-fit branch.
+    OVERLAPPED = {"rules": [(0.06, 0.60, 0.94, 0.94)], "pt": (0.78, 0.86, 0.94, 0.97)}
+
+    @staticmethod
+    def _printed_lines(image, panel):
+        """How many lines of text were actually printed into the panel.
+
+        Counted by row projection rather than by total ink, because ink is CONFOUNDED here: the
+        first fit's line height is what shifts the P/T exclusion for the second, so asking for
+        flavour changes the layout even in the broken case where the flavour is never drawn. The
+        number of lines on the card is not confounded — either the prose was set or it was not.
+        """
+        x0, y0, x1, y1 = compositor._box(panel, image.size)
+        grey = image.crop((x0, y0, x1, y1)).convert("L")
+        pixels = grey.load()
+        rows = [
+            sum(1 for x in range(grey.width) if pixels[x, y] < 120) for y in range(grey.height)
+        ]
+        return sum(1 for y, count in enumerate(rows) if count > 2 and rows[y - 1] <= 2)
+
+    def test_flavour_survives_a_pt_shield_overlapping_the_rules_panel(self):
+        """bd mtg-4qa — `_rules` fits the text twice and only the SECOND fit is drawn.
+
+        That re-fit was called without `flavours`, so every creature whose P/T shield overlaps its
+        rules panel printed NO flavour text and nothing reported it: the card still looked
+        finished, which is the failure class CLAUDE.md forbids. The tests above missed it because
+        their panel set has no `pt`, so the exclusion re-fit never ran at all.
+        """
+        long_flavour = {
+            **FACE,
+            "flavor_text": "The peaks remember every name they have burned, and the wind carries "
+            "each one down to the villages below, where the old keep a list and the young keep a "
+            "watch, and neither has ever once been enough to matter.",
+        }
+        without = compositor.compose(card((228, 208, 172)), long_flavour, self.OVERLAPPED)[0]
+        with_it = compositor.compose(
+            card((228, 208, 172)), long_flavour, self.OVERLAPPED, include_flavor_text=True
+        )[0]
+        panel = self.OVERLAPPED["rules"][0]
+        self.assertGreater(
+            self._printed_lines(with_it, panel),
+            self._printed_lines(without, panel) + 1,
+            "flavour text was asked for and the card came back with no more lines than without "
+            "it, so the prose was silently dropped",
+        )
 
     def test_flavour_is_absent_unless_it_is_asked_for(self):
         off, _ = compositor.compose(card((228, 208, 172)), self.FLAVOURED, self.PANEL)
