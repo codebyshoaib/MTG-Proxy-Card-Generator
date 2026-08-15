@@ -9,12 +9,139 @@ Scryfall `color_identity`, never from the style, because purple reads as black m
 purple-tinted mono-green card misstates its own cost.
 """
 
+import math
+
+from cards import compositor, textlayout
+
 COLOURS = {"W": "white", "U": "blue", "B": "black", "R": "red", "G": "green"}
 
 # Longest rules text that may be offered the narrow side-panel layout. Above this a column has to
 # wrap so hard that the shared type size drops below what reads across a table. See the comment
 # where it is used.
 FLOAT_MAX_CHARS = 110
+
+# The canvas: gemini-3-pro-image at 3:4 2K, which is the 1792x2400 we store and composite into.
+CANVAS = (1792, 2400)
+# A rules strip runs about 88% of the card's width once it is clear of the sides, and the
+# compositor then insets the text by PAD at each end. It is that INNER width the text wraps to —
+# measuring against the outer width assumes a wider measure than the text ever gets, under-counts
+# the lines, and asks for a strip too short.
+STRIP_WIDTH = round(CANVAS[0] * 0.88 * (1 - 2 * compositor.PAD))
+
+# MEDIAN LINE PITCH OF A REAL PRINTED CARD, as a fraction of card height. MEASURED 2026-08-15 over
+# n=40 real 2015-frame cards spanning 13-336 oracle characters (bd mtg-8h9,
+# spikes/measure_rules_size.py). Sizing the strip to this asks for a card that reads like a printed
+# one, rather than one that merely clears `compositor.RULES_MIN` — the floor is the point below
+# which a card is unusable, not the target.
+REAL_CARD_PITCH = 0.0332
+
+
+def _target_size():
+    """The em at which our text matches a real printing's line pitch.
+
+    Derived from `textlayout` rather than written down, so that if the face or the leading ever
+    changes the brief keeps asking for the right amount of room instead of quietly going stale.
+    """
+    for size in range(20, 200):
+        _, line_height, _ = textlayout.wrap(
+            textlayout.atoms("the quick brown fox"), size, STRIP_WIDTH, None
+        )
+        if line_height >= CANVAS[1] * REAL_CARD_PITCH:
+            return size
+    return 60
+
+
+TARGET_SIZE = _target_size()
+
+# The demand is a rounded PERCENTAGE, not a rung off a ladder, and that is measured.
+#
+# It was a ladder — 1/8, 1/6, 1/5, 1/4, 1/3 — on the theory that a model acts on fractions more
+# reliably. The theory cost more than it bought. Elesh Norn's text needs 26.6% of the card, the
+# ladder had no rung between a quarter and a third, so it rounded UP to a THIRD and asked for a
+# quarter more room than the card actually needs. MEASURED over 8 live faces on 2026-08-15: the
+# strip came back at or above the asked height 1 time in 8, and across six runs of that one card
+# it never passed 27.6%. An unreachable number is not a stricter instruction, it is an ignored
+# one — and it makes the compliance figure meaningless as well.
+#
+# Percentages are already this brief's own idiom ("inside the middle 92% of the canvas"), so
+# stating one costs nothing in legibility. Rounded UP to the nearest 2%, so the number reads as a
+# target rather than as a suspiciously precise measurement.
+STRIP_STEP = 0.02
+# A floor, because "as tall as this card's text needs" stops being sensible at the short end. A
+# 44-character card needs one line, which is 3% of the card — ask for that and the brief is
+# demanding a nameplate rather than a text box, and it would be asking for LESS than the model
+# already paints unprompted (Lightning Bolt came back at 14.0% on 2026-08-15). This was the old
+# fraction ladder's bottom rung doing work nobody had noticed it doing, so it is kept explicitly.
+# A real printed card goes further and gives every card the same text box whatever its text; the
+# reference site sizes panels to the text (HOW-THEY-DO §6) and that is the look being matched, so
+# this is a floor rather than a fixed size.
+STRIP_MIN = 1 / 8
+# Capped at a THIRD, measured rather than chosen: a real printed card gives its text box roughly
+# 28-30%, so a third for the wordiest cards is what Magic itself does. Capping lower guaranteed a
+# repaint on any card over ~270 characters, because the brief would then be asking for a surface
+# too short to hold the text even at the floor.
+STRIP_MAX = 1 / 3
+# The other two surfaces the brief asks for: the top plate (1/10th) and the narrow strip (1/16th).
+OTHER_SURFACES = 1 / 10 + 1 / 16
+TOTAL_LADDER = ((1 / 3, "a third"), (0.42, "two fifths"), (1 / 2, "half"), (0.55, "55%"))
+
+
+def _strip_height(face):
+    """(fraction, phrase) the rules strip must be for THIS card's text — or None if it has none.
+
+    THE POINT OF THIS FUNCTION. `compositor.RULES_MIN` was validated over n=40 real printed cards
+    and is right to within 6% of the tightest real printing, so a card that trips it is genuinely
+    unreadable and the floor must not be moved. The defect it reports is upstream: the surface the
+    model painted is too short. The brief used to ask for a strip "tall enough to hold every line
+    of text comfortably", which is a wish — the model has no idea how much text this card has,
+    because we deliberately never show it any. So the number is computed here and stated.
+
+    The reference site evidently does the same thing: HOW-THEY-DO 2026-08-10 §6 records that they
+    size the panel TO the text, which is why theirs has no dead parchment.
+
+    Measured with the compositor's own layout engine, so the two cannot drift apart.
+    """
+    needed = _needed(face)
+    if not needed:
+        return None
+    rounded = math.ceil(needed / STRIP_STEP) * STRIP_STEP
+    asked = min(STRIP_MAX, max(STRIP_MIN, rounded))
+    return asked, f"{asked * 100:.0f}%"
+
+
+def _needed(face):
+    """The bare fraction of the card this face's text occupies, before any floor, cap or rounding.
+
+    Split out so a test can assert the DEMAND tracks the NEED — the defect that made the old
+    fraction ladder ask for a third of the card when 26.6% would do.
+    """
+    oracle = "\n".join(p for p in (face.get("oracle_text") or "").split("\n") if p.strip())
+    if not oracle:
+        return 0.0
+    # Wrapped in ONE pass, exactly as `compositor._rules` does it. Measuring each ability on its
+    # own and adding the results looks equivalent and is not: `block_height` charges a gap BETWEEN
+    # abilities, and an ability measured alone has no gap to charge. On a four-ability card that
+    # lost three gaps and under-asked by enough that a quarter of the card still overflowed —
+    # caught by the round-trip test, which is the only reason this is right.
+    wrapped, line_height, _ = textlayout.wrap(
+        textlayout.atoms(oracle), TARGET_SIZE, STRIP_WIDTH, None
+    )
+    return textlayout.block_height(wrapped, line_height) / (CANVAS[1] * (1 - 2 * compositor.PAD))
+
+
+def _surface_budget(face):
+    """How much of the card all the raised surfaces may cover, given what the rules strip needs.
+
+    Kept consistent with `_strip_height` by construction. The artwork still has to dominate — that
+    requirement was measured on 2026-08-10, when the slab came back eating ~40% of three cards in
+    a row — so this only ever loosens by as much as the text genuinely requires.
+    """
+    room = _strip_height(face)
+    needed = (room[0] if room else 1 / 6) + OTHER_SURFACES
+    for fraction, phrase in TOTAL_LADDER:
+        if needed <= fraction:
+            return phrase
+    return TOTAL_LADDER[-1][1]
 
 # The reference site's own 48 styles, keyed by the exact value its API sends (`art_style` in
 # POST /api/ai-proxies/generate/), so the frontend can pass a value straight through. Labels are
@@ -699,10 +826,21 @@ def creative_full(
         "a NARROW horizontal strip lower down, about 1/16th of the card's height, sitting "
         "directly above the broad pale strip below it. Do not omit this piece",
     ]
+    # PER CARD, not one wish for every card (bd mtg-8h9). "Tall enough to hold every line of
+    # text" cannot be acted on by a model that is never shown the text — and is never shown it on
+    # purpose, because the whole design is that we composite the words and it paints the surface.
+    # So the room its text needs is measured with the compositor's own engine and stated.
+    room = _strip_height(face)
     band = (
-        "ONE broad pale strip across the lower third, tall enough to hold every line of text "
-        "comfortably with a margin. This is the single most important surface on the card: it "
-        "must not be cramped, and nothing else may crowd it"
+        "ONE broad pale strip across the lower third, "
+        + (
+            f"AT LEAST {room[1]} of the card's height. This card's rules text needs exactly that "
+            "much room to be read across a table, and a shorter strip makes the card unusable"
+            if room
+            else "tall enough to hold every line of text comfortably with a margin"
+        )
+        + ". This is the single most important surface on the card: it must not be cramped, and "
+        "nothing else may crowd it"
     )
     # The reference site produces a narrow right-hand rules panel on about 2 of every 10 cards
     # (measured on the ten Tannuks), with the art filling the space beside it. It is the best-
@@ -934,8 +1072,13 @@ def creative_full(
             else "The edge material is a narrow margin — no thicker than 1/12th of the card where "
             "it is thickest, and thinner than that along the sides. "
         )
-        + "The raised surfaces together may cover no more than a third of the card's height, "
-        "and the strip is a BAND across the lower third — never half the card.",
+        # Derived from the band above rather than fixed at "a third". Fixed, it CONTRADICTED the
+        # per-card strip requirement on wordy cards — the band alone could be a quarter, and a
+        # quarter plus the top plate plus the narrow strip is already over a third. A brief that
+        # asks for two incompatible things gets one of them at random, which is the same class of
+        # bug as bd mtg-cjx.
+        + f"The raised surfaces together may cover no more than {_surface_budget(face)} of the "
+        "card's height, and the strip is a BAND across the lower third — never half the card.",
         (
             "The raised surfaces may not cover the subject's head, face or silhouette."
             if borderless
@@ -1002,21 +1145,58 @@ def creative_full(
     # measured — stated mid-brief it lost on 2 of 3 cards — and lettering is the worse failure of
     # the two: painted text collides with the text we composite and makes the card unusable,
     # while a purple tint misstates the colour identity of a card that still works.
-    if "B" not in (face.get("color_identity") or []):
-        # Located by looking for the ban rather than counting back from the end: it was inserted
-        # at len(lines) - 1 and silently moved AFTER the writing ban the day a rune sentence was
-        # appended, which is the exact position this comment says it must never take.
-        writing_ban = next(
-            index
-            for index, line in enumerate(lines)
-            if line.startswith("ABSOLUTE REQUIREMENT")
-        )
+    def before_the_writing_ban(sentence):
+        """Insert late, but never after the lettering ban — that ban's last place is measured.
+
+        Located by looking for the ban rather than counting back from the end: a clause was once
+        inserted at len(lines) - 1 and silently moved AFTER it the day a rune sentence was
+        appended, which is the exact position these comments say it must never take.
+        """
         lines.insert(
-            writing_ban,
+            next(
+                index
+                for index, line in enumerate(lines)
+                if line.startswith("ABSOLUTE REQUIREMENT")
+            ),
+            sentence,
+        )
+
+    # MEASURED 2026-08-15, bd mtg-8h9 — the first diagnosis made possible by keeping the blank
+    # (bd mtg-57t). Elesh Norn came back with all four surfaces painted in the right ORDER and all
+    # four crammed into the bottom 45% of the card: the name plate landed at y=0.556 and
+    # `check.title_out_of_order` failed it. Job c66d6b93 did the same on the same card before that.
+    #
+    # The placement is already stated once, in the middle of the ~100-word sentence that lists the
+    # four surfaces, and it lost there. This file has learned the same lesson twice — the lettering
+    # ban had to move to the very end before it held on 3 of 3 — so it is repeated late and alone.
+    #
+    # The REASON is given rather than just the rule, because the reason is a real constraint a
+    # model can reason from: a hand of cards is held fanned, so the name is the only part of most
+    # of them that is visible at all. Nothing the compositor can do repairs this — we print onto
+    # the plates that were painted, and inventing one is the pasted-on rectangle the client
+    # rejected (bd mtg-vbo), so the brief is the only lever there is.
+    # Worded in SHAPES — "the top plate", "the broad pale strip" — and never as the fields they
+    # will carry. Naming a field invites filling it: "title banner" came back with a painted title
+    # and "plaque for power/toughness" with a literal "P/T" (2026-08-10), and
+    # `test_surfaces_are_described_as_shapes_not_as_fields` is what holds that line. The first
+    # draft of this very clause broke it.
+    before_the_writing_ban(
+        "AND: THE TOP PLATE SITS AT THE TOP OF THE CARD. Its upper edge "
+        + ("is inside the top tenth of the image, with the picture running behind it"
+           if borderless else "touches the upper edge of the card")
+        + ". Filling the upper half of the card with picture and then stacking all three "
+        "surfaces together down the lower half is the single most common way this image comes "
+        "back wrong, and it is wrong even when their order is right. These cards are held fanned "
+        "in one hand, so the top sliver of each is the ONLY part of it anyone can see — a top "
+        "plate lower down makes a card nobody can pick out of a hand."
+    )
+
+    if "B" not in (face.get("color_identity") or []):
+        before_the_writing_ban(
             "AND: no purple, violet, magenta or lilac anywhere in this image — not in the art, "
             "not in the light, "
             + ("" if borderless else "not in the edge material, ")
-            + "not in any surface. Purple reads as black mana and this card is not black.",
+            + "not in any surface. Purple reads as black mana and this card is not black."
         )
     return "\n".join(lines)
 

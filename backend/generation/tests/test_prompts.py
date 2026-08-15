@@ -551,3 +551,167 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn("COLOURLESS", brief)
         for banned in ("No red fire", "no green growth", "no blue water", "no black rot"):
             self.assertIn(banned, brief)
+
+
+class StripHeightTests(SimpleTestCase):
+    """The brief states how tall THIS card's rules strip has to be, instead of wishing for it.
+
+    MEASURED 2026-08-15 over n=40 real printed 2015-frame cards (bd mtg-8h9,
+    spikes/measure_rules_size.py): `compositor.RULES_MIN` is right to within 6% of the tightest
+    real printing, so a card that trips it is genuinely unreadable and the floor must not be moved
+    to make cards pass. The defect is upstream — the painted surface is too short — and the model
+    could never have known, because we deliberately never show it the text.
+    """
+
+    TERSE = {**GREEN, "oracle_text": "Trample, haste"}
+    WORDY = {
+        **GREEN,
+        "oracle_text": "Indestructible\nWhen this permanent enters, if you cast it, you gain "
+        "protection from everything until your next turn.\nAt the beginning of your upkeep, you "
+        "lose 1 life for each burden counter on it.\n{T}: Put a burden counter on it, then draw a "
+        "card for each burden counter on it.",
+    }
+
+    def test_a_wordier_card_asks_for_a_taller_strip(self):
+        self.assertGreater(
+            prompts._strip_height(self.WORDY)[0], prompts._strip_height(self.TERSE)[0]
+        )
+
+    def test_the_requirement_reaches_the_brief_with_a_number_in_it(self):
+        brief = prompts.creative_full(self.WORDY)
+        self.assertIn("AT LEAST", brief)
+        self.assertIn(prompts._strip_height(self.WORDY)[1], brief)
+        # And it must not license several strips: the brief already says "do not split a
+        # surface into a row of smaller ones — the one broad pale strip is the only place the
+        # rules text goes". A height clause that says "or their combined height" contradicts it,
+        # and a brief that asks for two incompatible things gets one of them at random.
+        self.assertNotIn("COMBINED", brief)
+
+    def test_a_card_with_no_rules_text_is_not_told_to_paint_a_strip_of_none(self):
+        """Vanilla creatures exist, and an f-string with a None in it is a brief that reads as
+        broken to the model."""
+        vanilla = {**GREEN, "oracle_text": ""}
+        self.assertIsNone(prompts._strip_height(vanilla))
+        brief = prompts.creative_full(vanilla)
+        self.assertNotIn("None", brief)
+        self.assertIn("tall enough to hold every line of text", brief)
+
+    def test_the_surface_budget_never_contradicts_the_strip_it_asks_for(self):
+        """A brief that asks for two incompatible things gets one of them at random — the same
+        class of bug as bd mtg-cjx. The band alone can be a quarter of the card, and a quarter
+        plus the top plate plus the narrow strip is already over the old fixed 'a third'."""
+        allowed = dict((phrase, fraction) for fraction, phrase in prompts.TOTAL_LADDER)
+        for face in (self.TERSE, self.WORDY, {**GREEN, "oracle_text": "Flying"}):
+            room = prompts._strip_height(face)
+            budget = allowed[prompts._surface_budget(face)]
+            self.assertGreaterEqual(
+                budget,
+                room[0] + prompts.OTHER_SURFACES - 0.02,
+                f"the budget leaves no room for the strip the same brief demands: {face}",
+            )
+
+    def test_the_demand_never_inflates_past_what_the_text_actually_needs(self):
+        """The bug this replaced. A ladder of 1/8, 1/6, 1/5, 1/4, 1/3 had no rung between a
+        quarter and a third, so a card needing 26.6% was told to paint 33.3% — a quarter more
+        room than it needs. MEASURED over 8 live faces: the strip came back at or above the asked
+        height 1 time in 8, and across six runs of that card it never passed 27.6%. An unreachable
+        number is an ignored one, so the demand must track the need to within one rounding step.
+        """
+        for face in (self.TERSE, self.WORDY, {**GREEN, "oracle_text": "Flying"}):
+            asked, _ = prompts._strip_height(face)
+            if asked in (prompts.STRIP_MIN, prompts.STRIP_MAX):
+                continue  # clamped by the floor or the cap, which are deliberate
+            need = prompts._needed(face)
+            self.assertGreaterEqual(asked, need, "it must still be enough to hold the text")
+            self.assertLess(asked - need, prompts.STRIP_STEP, "rounded up by more than one step")
+
+    def test_a_short_card_is_not_told_to_paint_a_sliver(self):
+        """"As tall as this card's text needs" stops being sensible at the short end: a 44
+        character card needs one line, which is 3% of the card. Asking for that would demand a
+        nameplate rather than a text box, and LESS than the model paints unprompted — Lightning
+        Bolt came back at 14.0% on 2026-08-15."""
+        bolt = {**GREEN, "oracle_text": "Lightning Bolt deals 3 damage to any target."}
+        asked, phrase = prompts._strip_height(bolt)
+        self.assertEqual(asked, prompts.STRIP_MIN)
+        self.assertIn(phrase, prompts.creative_full(bolt))
+
+    def test_the_artwork_still_dominates_however_wordy_the_card(self):
+        """Measured 2026-08-10, the slab came back eating ~40% of three cards in a row and the art
+        had to be told it outranks the furniture. Sizing the strip to the text must not undo that."""
+        for face in (self.TERSE, self.WORDY):
+            self.assertLessEqual(prompts._strip_height(face)[0], 1 / 3)
+
+    def test_a_strip_of_the_size_the_brief_asks_for_really_does_clear_the_floor(self):
+        """The round trip, and the only test here with real teeth.
+
+        `_strip_height` computes a number and the brief states it; this checks that a strip of
+        exactly that size, handed to the compositor, produces text above `compositor.RULES_MIN`.
+        Without this the brief and the renderer can agree on a wrong number forever.
+        """
+        from PIL import Image
+
+        from cards import compositor
+
+        for face in (self.TERSE, self.WORDY, {**GREEN, "oracle_text": "Flying"}):
+            fraction, phrase = prompts._strip_height(face)
+            card = Image.new("RGBA", prompts.CANVAS, (228, 208, 172, 255))
+            printable = {
+                "name": "Craterhoof Behemoth",
+                "mana_cost": "{5}{G}{G}{G}",
+                "type_line": "Creature — Beast",
+                "oracle_text": face["oracle_text"],
+                "power": "5",
+                "toughness": "5",
+            }
+            panel = (0.06, 0.94 - fraction, 0.94, 0.94)
+            _, overflowed = compositor.compose(card, printable, {"rules": [panel]})
+            self.assertFalse(
+                overflowed,
+                f"the brief asks for {phrase} and that is still too small for "
+                f"{len(face['oracle_text'])} characters",
+            )
+
+
+class TopPlatePlacementTests(SimpleTestCase):
+    """The top plate has to be asked for LATE, not only in the list of surfaces.
+
+    MEASURED 2026-08-15 (bd mtg-8h9), the first diagnosis the kept blank made possible: Elesh Norn
+    came back with all four surfaces painted in the right ORDER and all four crammed into the
+    bottom 45% of the card. The name landed at y=0.556 and check.title_out_of_order failed it. Job
+    c66d6b93 did the same on the same card earlier. The placement was already stated once, in the
+    middle of the ~100-word sentence listing the surfaces, and it lost there — the same way the
+    lettering ban lost until it was moved to the end.
+    """
+
+    def _lines(self, **kwargs):
+        return prompts.creative_full(GREEN, **kwargs).split("\n")
+
+    def test_the_top_plate_is_asked_for_again_near_the_end(self):
+        lines = self._lines()
+        clause = next(i for i, l in enumerate(lines) if "THE TOP PLATE SITS AT THE TOP" in l)
+        surfaces = next(i for i, l in enumerate(lines) if "Paint exactly these" in l)
+        ban = next(i for i, l in enumerate(lines) if l.startswith("ABSOLUTE REQUIREMENT"))
+        self.assertGreater(clause, surfaces, "restating it before the list is not restating it")
+        self.assertLess(clause, ban, "nothing may push the lettering ban off the end")
+
+    def test_it_names_shapes_and_not_the_fields_they_will_carry(self):
+        """The first draft of this clause said "the name plate... the type strip... the rules
+        panel" and broke test_surfaces_are_described_as_shapes_not_as_fields. Naming a field
+        invites filling it, and a painted title collides with the one we composite."""
+        brief = prompts.creative_full({**GREEN, "power": "5"})
+        for invitation in ("title banner", "type bar", "power/toughness", "rules panel"):
+            self.assertNotIn(invitation, brief)
+
+    def test_the_framed_layout_asks_for_the_edge_instead_of_the_top_tenth(self):
+        """Borderless floats the plate just inside the top because the scene runs behind it;
+        framed has an actual edge for it to touch."""
+        self.assertIn("inside the top tenth", "\n".join(self._lines()))
+        self.assertIn("touches the upper edge", "\n".join(self._lines(borderless=False)))
+
+    def test_the_purple_ban_keeps_its_place_immediately_before_the_lettering_ban(self):
+        """Both are inserted at the same anchor, so adding one must not demote the other — the
+        purple ban's late position is itself measured (BUILD-SPEC 7, a client-reported bug)."""
+        lines = prompts.creative_full({**GREEN, "color_identity": ["G"]}).split("\n")
+        purple = next(i for i, l in enumerate(lines) if l.startswith("AND: no purple"))
+        ban = next(i for i, l in enumerate(lines) if l.startswith("ABSOLUTE REQUIREMENT"))
+        self.assertEqual(ban - purple, 1, "something was inserted between purple and the ban")
