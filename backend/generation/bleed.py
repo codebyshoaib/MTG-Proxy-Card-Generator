@@ -13,6 +13,7 @@ trimming loses nothing: the art was never in the margin.
 """
 
 import io
+import statistics
 
 from PIL import Image
 
@@ -46,6 +47,30 @@ the middle of the gap instead, the same way CONTRAST_MIN does. There is more tha
 between the clusters that this threshold needs, so it is not tuned to the one card that failed.
 """
 
+FLAT_MAX = 4.0
+"""How far the light edge pixels may stray from their own median and still be a mat.
+
+Median absolute deviation, worst channel, over the light ring pixels only.
+
+ADDED 2026-08-16, bd mtg-fsw. `MATTED` alone cannot do the job this module's own docstring
+describes. The test is "is the edge ONE FLAT COLOUR all the way round", but the implementation
+only asked whether the edge pixels sit within `TOLERANCE` of each other — and a pale watercolour
+sky varies by less than that, so a correct full-bleed painting read as a mat:
+
+    printed mat  Raphael 0.883 share / 1.00 MAD    reference-site white border 1.000 / 1.00
+    pale wash    Serra   0.634 share / 16.50 MAD   Serra 0.614 / 15.50   Swords 0.741 / 11.00
+
+Both watercolour Serras and the watercolour Swords are CORRECT cards, painted to all four edges.
+Raising `MATTED` past 0.741 was not available: the only real mat measured sits at 0.883 and the
+client rejected that exact card, so the constant would have been fitted to a 0.14 gap. Flatness
+opens a 9x one instead, and this sits in the middle of it — 4x above every mat measured, 2.4x
+below the palest correct painting.
+
+Median rather than standard deviation on purpose: a cream mat around a bright snow scene puts
+light SCENE pixels in the same sample, and a mean-based spread would be dragged up by them into
+calling a real mat a painting. The median ignores them while the mat is the bulk of the ring.
+"""
+
 MAX_DEPTH = 0.10
 """Deepest margin we will cut, as a share of the shorter side.
 
@@ -72,12 +97,24 @@ def _near(pixel, colour):
     return all(abs(a - b) <= TOLERANCE for a, b in zip(pixel, colour))
 
 
+def _deviation(pixels):
+    """Worst channel's median absolute deviation — how far these pixels stray from one colour."""
+    return max(
+        statistics.median([abs(value - statistics.median(channel)) for value in channel])
+        for channel in zip(*pixels)
+    )
+
+
 def matted_share(image):
     """0.0 to 1.0 — how much of the edge is one flat light colour, i.e. a mat."""
     ring = _ring(image)
     light = [p for p in ring if min(p) > LIGHT]
     if len(light) < len(ring) * MATTED:
         return len(light) / len(ring) if ring else 0.0
+    if _deviation(light) > FLAT_MAX:
+        # Light all the way round, but a wash rather than a printed colour — see FLAT_MAX. None of
+        # this edge is ONE flat colour, so none of it is mat.
+        return 0.0
     # The mat's own colour, taken from the ring rather than assumed to be white — the ones
     # measured are cream (#f4efe3), not #ffffff.
     colour = tuple(sorted(channel)[len(channel) // 2] for channel in zip(*light))

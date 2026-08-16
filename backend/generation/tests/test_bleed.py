@@ -33,6 +33,21 @@ def _matted(depth, colour=(244, 239, 227)):
     return card
 
 
+def _wash(size=CANVAS):
+    """A pale watercolour sky: light at every single edge pixel, but never one flat colour.
+
+    The drift is deliberately smaller than TOLERANCE, because that is the bug — a wash sits well
+    inside the tolerance of its own median, so nearness alone cannot tell it from a printed mat.
+    """
+    image = Image.new("RGB", size)
+    pixels = image.load()
+    for y in range(size[1]):
+        for x in range(size[0]):
+            drift = (x * 7 + y * 11) % 40
+            pixels[x, y] = (205 + drift, 208 + drift, 214 + drift)
+    return image
+
+
 def _png(image):
     out = io.BytesIO()
     image.save(out, format="PNG")
@@ -52,6 +67,21 @@ class MeasureTests(SimpleTestCase):
         snow = _scene()
         snow = Image.blend(snow, Image.new("RGB", CANVAS, (235, 240, 248)), 0.75)
         self.assertLess(bleed.matted_share(snow), bleed.MATTED)
+
+    def test_a_pale_watercolour_sky_is_not_a_mat(self):
+        """MEASURED 2026-08-16, bd mtg-fsw. A correct full-bleed watercolour Serra Angel — cloud
+        painted to all four edges, no border anywhere — scored 0.63 against a 0.55 gate and was
+        graded UNSOUND for a defect it does not have. Brightness was never the test and neither is
+        nearness: a wash varies by less than TOLERANCE, so it reads flat. Flatness itself is what
+        separates the two populations — the mats measure 1.0, the washes 9.5 to 16.5.
+        """
+        wash = _wash()
+        self.assertGreater(
+            min(min(pixel) for pixel in bleed._ring(wash)),
+            bleed.LIGHT,
+            "the repro is only honest if every edge pixel really is light",
+        )
+        self.assertLess(bleed.matted_share(wash), bleed.MATTED)
 
 
 class TrimTests(SimpleTestCase):
