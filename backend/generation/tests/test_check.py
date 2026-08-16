@@ -5,9 +5,9 @@ that each was caught only because a human happened to be looking at the output.
 """
 
 from django.test import SimpleTestCase
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from generation import check, panels as panels_module
+from generation import bleed, check, panels as panels_module
 
 CREATURE = {"power": "5", "toughness": "4", "oracle_text": "Trample"}
 SPELL = {"power": None, "oracle_text": "Counter target spell."}
@@ -225,3 +225,143 @@ class MarkPlacementTests(SimpleTestCase):
         """Shaped like a line of card text, in open art, well clear of every plate."""
         panels = {**SOUND, "marks": [(0.15, 0.35, 0.85, 0.40)]}
         self.assertIn("painted_marks", codes(CREATURE, panels))
+
+
+class PtTabMarkTests(SimpleTestCase):
+    """A blank tab is not a mark; a symbol carved into one is.
+
+    CLIENT 2026-08-16, on a staged Craterhoof: "that too blank without any symbol in it, craterhoof
+    has spiral in it." The model carved a spiral into the P/T tab and we printed 5/5 over it. The
+    brief bans it by name, the detector's `marks` list is the mechanism for catching it, and
+    `_in_pt_corner` threw it away — that filter exists to drop the BLANK tab, which the detector
+    reported as a mark on 4 of 4 runs in 2026-08-13.
+    """
+
+    TAB = (0.80, 0.86, 0.94, 0.96)
+
+    def test_the_blank_tab_reported_as_a_mark_is_still_dropped(self):
+        """The false positive this filter was built for: same object, same box."""
+        self.assertTrue(panels_module._is_the_pt_tab((0.80, 0.86, 0.94, 0.96), self.TAB))
+        # And a slightly loose box around the same tab is still the tab.
+        self.assertTrue(panels_module._is_the_pt_tab((0.805, 0.865, 0.935, 0.955), self.TAB))
+
+    def test_a_symbol_carved_into_the_tab_is_kept(self):
+        """The client's spiral: a small thing well inside the tab, not the tab."""
+        spiral = (0.855, 0.895, 0.905, 0.935)
+        self.assertTrue(panels_module._in_pt_corner(spiral))
+        self.assertFalse(panels_module._is_the_pt_tab(spiral, self.TAB))
+
+    def test_with_no_tab_detected_the_old_region_behaviour_stands(self):
+        """Nothing to compare against, so keep the behaviour this filter has had since
+        2026-08-13: a false repaint costs a credit, a missed spiral costs one card."""
+        self.assertTrue(panels_module._is_the_pt_tab((0.855, 0.895, 0.905, 0.935), None))
+        self.assertFalse(panels_module._is_the_pt_tab((0.10, 0.10, 0.20, 0.20), None))
+
+
+class MattedThresholdTests(SimpleTestCase):
+    """The mat threshold has to sit BETWEEN the two populations, not on top of one.
+
+    MEASURED 2026-08-16 on a six-card batch. A Comic Book Raphael came back with a white mat on
+    all four sides, graded SOUND and shipped — it scored 0.8828 against a threshold of 0.9000, so
+    a defect the client would have circled was lost by 0.017.
+
+        clean    Craterhoof 0.000    Sol Ring 0.107
+        matted   Raphael    0.883
+    """
+
+    @staticmethod
+    def ring(matted_share, size=400):
+        """A card whose outer ring is `matted_share` flat cream and the rest dark scene."""
+        image = Image.new("RGB", (size, size), (30, 34, 40))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([0, 0, size - 1, int(size * matted_share) - 1], fill=(242, 238, 226))
+        return image
+
+    def test_the_threshold_sits_between_the_measured_populations(self):
+        self.assertGreater(bleed.MATTED, 0.107, "would fail Sol Ring, a clean card")
+        self.assertLess(bleed.MATTED, 0.883, "would pass Raphael, which is matted")
+
+    def test_a_card_matted_on_every_side_is_caught(self):
+        image = Image.new("RGB", (400, 400), (242, 238, 226))
+        ImageDraw.Draw(image).rectangle([60, 60, 339, 339], fill=(30, 34, 40))
+        self.assertGreaterEqual(bleed.matted_share(image), bleed.MATTED)
+
+    def test_a_full_bleed_scene_is_not_called_a_mat(self):
+        """A painted scene is never one flat colour the whole way round, which is the property
+        this measures — not whether the edge happens to be light."""
+        image = Image.new("RGB", (400, 400))
+        pixels = image.load()
+        for x in range(400):
+            for y in range(400):
+                pixels[x, y] = ((x * 7) % 256, (y * 5) % 256, ((x + y) * 3) % 256)
+        self.assertLess(bleed.matted_share(image), bleed.MATTED)
+
+
+class ColourIdentityTests(SimpleTestCase):
+    """Graded against Scryfall, never against what the user picked on the UI.
+
+    CLAUDE.md treats this as correctness: the client reported purple leaking into a mono-green
+    card. Until 2026-08-16 the rule lived only in the brief — `prompts._palette` argued for it and
+    nothing measured the result, which is why bd mtg-5pb is intermittent: `ice` on a mono-red
+    Lightning Bolt came back blue-white on one run and red on a rerun with identical inputs.
+
+    MEASURED over the six-card VERIFY2 batch: coloured cards run 23-51% saturated with their own
+    hue at 72-95% of that, while white and colourless run 1% and 7% with no hue at all. Two
+    populations, two rules.
+    """
+
+    @staticmethod
+    def flat(rgb, size=200):
+        return Image.new("RGB", (size, size), rgb)
+
+    def test_a_green_card_that_reads_green_passes(self):
+        self.assertIsNone(check.colour_identity(self.flat((40, 190, 70)), {"color_identity": ["G"]}))
+
+    def test_a_red_card_that_reads_blue_is_caught(self):
+        problem = check.colour_identity(self.flat((40, 90, 210)), {"color_identity": ["R"]})
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "colour_identity")
+
+    def test_purple_on_a_non_black_card_is_caught(self):
+        """The client's own reported bug, and the one the brief calls absolute."""
+        problem = check.colour_identity(self.flat((150, 60, 200)), {"color_identity": ["G"]})
+        self.assertIsNotNone(problem)
+        self.assertIn("purple", problem.detail)
+
+    def test_purple_on_a_black_card_is_fine(self):
+        self.assertIsNone(check.colour_identity(self.flat((150, 60, 200)), {"color_identity": ["B"]}))
+
+    def test_a_neutral_card_makes_no_claim_and_is_not_failed(self):
+        """White and colourless have NO hue — Elesh Norn measured 7% saturated and Sol Ring 1%.
+        Asking "is the dominant hue correct" of a card with no hue fails every one of them on
+        whatever scrap of colour it happens to carry."""
+        for identity in ([], ["W"]):
+            self.assertIsNone(
+                check.colour_identity(self.flat((190, 188, 182)), {"color_identity": identity})
+            )
+
+    def test_a_card_that_only_leans_wrong_is_left_alone(self):
+        """DOMINANT_SHARE has room under every correct card in the batch (72-95%), so a mixed
+        scene is not a repaint — only a card that actually reads as the wrong colour is."""
+        image = Image.new("RGB", (200, 200), (40, 190, 70))
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 99], fill=(40, 90, 210))  # half blue
+        self.assertIsNone(check.colour_identity(image, {"color_identity": ["G"]}))
+
+    def test_the_gate_takes_no_user_selection(self):
+        """The style, direction and palette are what it guards against, so it must not be able to
+        see them — a gate that took the selection could be talked out of firing by it."""
+        import inspect as _inspect
+
+        args = _inspect.signature(check.colour_identity).parameters
+        self.assertEqual(list(args), ["card", "face"])
+
+    def test_hue_buckets_are_summed_per_mana_colour_not_judged_separately(self):
+        """MEASURED 2026-08-16: Counterspell under `fire` came back blue 53% + cyan 38% and passed
+        only because neither bucket alone cleared DOMINANT_SHARE — a RED card at 53% would have
+        passed identically. Blue and cyan are one mana colour to a player, and so are red and
+        orange, so the dominance test is run on the sum."""
+        image = Image.new("RGB", (200, 200), (200, 60, 40))       # red
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 89], fill=(230, 130, 40))  # orange
+        problem = check.colour_identity(image, {"color_identity": ["U"]})
+        self.assertIsNotNone(problem, "red+orange split below the bar and escaped the gate")
+        self.assertIn("red", problem.detail)

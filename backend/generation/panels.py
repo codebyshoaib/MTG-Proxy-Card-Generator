@@ -116,11 +116,12 @@ Report the bounding box of each blank surface, as [ymin, xmin, ymax, xmax] norma
   surfaces on the card — parchment, pale stone, glowing amber — and there may be one broad slab
   or several separate strips stacked down the lower part of the card. Report every one of them
   separately; do not merge two strips into one box that spans the gap between them.
-- "pt": the small shield, boss or plaque near the BOTTOM-RIGHT of the card, usually overlapping
-  the corner of the lowest pale strip. It is small and roughly square or shield-shaped, and it is
-  not one of the pale text strips. Report it whenever one is present, even if it sits on the
-  card's edge decoration rather than on a strip, and even if it looks like a badge or an emblem —
-  it belongs HERE and not under "marks" below.
+- "pt": the small raised tab near the BOTTOM-RIGHT of the card, usually overlapping the corner of
+  the lowest pale strip. ANY shape counts — a rounded rectangle, a disc, a shield, a boss, a
+  plaque, a banner end, an irregular slab of the scene's own material — and it is not one of the
+  pale text strips. Report it whenever one is present, even if it sits on the card's edge
+  decoration rather than on a strip, and even if it looks like a badge or an emblem — it belongs
+  HERE and not under "marks" below.
 
 Then report two kinds of DEFECT, each as a list of boxes, empty if the card has none:
 
@@ -145,16 +146,18 @@ not report a region of the artwork, or the card's edge decoration, as a surface.
 
 PT_DETAIL_PROMPT = """
 A SECOND image is attached. It is the bottom-right corner of the same card, enlarged, so the
-small shield is easier to see than it is in the full card above.
+small tab is easier to see than it is in the full card above.
 
-This card is a creature, so it has a power/toughness value to print and a shield to print it on.
+This card is a creature, so it has a power/toughness value to print and a small raised tab to
+print it on. That tab may be ANY shape — a rounded rectangle, a disc, a shield, a boss, a plaque,
+a banner end, an irregular slab of the scene's own material.
 
-In "pt_detail", give the shield's box IN THE SECOND IMAGE'S OWN COORDINATES, 0-1000 over that
-image's width and height — not the card's. Give its INNER FACE: the flat recessed area the
-numbers will be printed on, INSIDE the raised rim, not the shield's outer silhouette. The rim is
-often bright metal and printing on it is exactly the mistake to avoid.
+In "pt_detail", give that tab's box IN THE SECOND IMAGE'S OWN COORDINATES, 0-1000 over that
+image's width and height — not the card's. Give its INNER FACE: the flat area the numbers will be
+printed on, INSIDE any raised rim, not the tab's outer silhouette. The rim is often bright metal
+and printing on it is exactly the mistake to avoid.
 
-If the second image shows no shield, boss or plaque at all, omit "pt_detail"."""
+If the second image shows no such tab at all, omit "pt_detail"."""
 
 
 def _usable(box):
@@ -189,6 +192,36 @@ PT_CORNER = (0.68, 0.72)
 def _in_pt_corner(box):
     x0, y0, x1, y1 = box
     return (x0 + x1) / 2 > PT_CORNER[0] and (y0 + y1) / 2 > PT_CORNER[1]
+
+
+# A mark in the P/T corner is dropped only if it is THE TAB, not something painted ON the tab.
+# Below this share of the tab's own area it is ink, not the object.
+#
+# CLIENT 2026-08-16, on a staged Craterhoof: "that too blank without any symbol in it, craterhoof
+# has spiral in it" — the model carved a spiral into the P/T tab and we printed 5/5 straight over
+# it. The brief already bans it by name ("no ... sigil, rune-circle, SPIRAL or logo at either end
+# of any surface"), the detector's "marks" list is exactly the mechanism for catching it, and
+# `_in_pt_corner` threw it away, because that filter exists to drop the BLANK tab which the
+# detector kept reporting as a mark (4 of 4 runs, 2026-08-13).
+#
+# The two are easy to tell apart once you ask the right question. The false positive IS the tab —
+# same box, same size. A spiral is a small thing well inside it. So the filter now compares the
+# mark against the tab we detected rather than against a region of the card.
+PT_MARK_SHARE = 0.55
+
+
+def _is_the_pt_tab(mark, tab):
+    """True if this mark is just the blank tab being reported again.
+
+    Falls back to the old region test when no tab was detected: with nothing to compare against,
+    dropping the mark is the behaviour this filter has had since 2026-08-13, and a false repaint
+    is worse than a missed spiral on the one card in ten where detection misses the tab entirely.
+    """
+    if not tab:
+        return _in_pt_corner(mark)
+    area = (mark[2] - mark[0]) * (mark[3] - mark[1])
+    tab_area = (tab[2] - tab[0]) * (tab[3] - tab[1])
+    return tab_area > 0 and area >= tab_area * PT_MARK_SHARE
 
 
 # WHERE THE SHIELD IS, when the detector does not report one (bd mtg-wfp).
@@ -342,7 +375,13 @@ def detect(png, paragraphs=None, expect_pt=False):
     for key in ("rules", *FAULTS):
         boxes = [box for box in map(_usable, raw.get(key) or []) if box]
         if key == "marks":
-            boxes = [box for box in boxes if not _in_pt_corner(box)]
+            # Only the tab itself is dropped now, never something painted on it (the client's
+            # spiral, 2026-08-16). `panels["pt"]` is already set: SINGLE is walked above.
+            boxes = [
+                box
+                for box in boxes
+                if not (_in_pt_corner(box) and _is_the_pt_tab(box, panels.get("pt")))
+            ]
         if boxes:
             panels[key] = sorted(boxes, key=lambda box: box[1])
 

@@ -174,6 +174,12 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
         # not in `inspect`. Contrast applies to every layout: a panel too dark for its own text is
         # unreadable whether or not the card runs to the edge.
         problems += [problem for problem in [check.contrast(card, detected)] if problem]
+        # Graded against Scryfall's `color_identity` and NOT against `options`. The style, art
+        # direction and palette the user picked on the UI are the thing this guards against — a
+        # mono-red Lightning Bolt under the `ice` palette came back blue-white (bd mtg-5pb) — so
+        # a gate that took them as input could be talked out of firing by the very selection that
+        # caused the fault. CLAUDE.md: colour identity comes from Scryfall, never from the style.
+        problems += [problem for problem in [check.colour_identity(card, face)] if problem]
         if options.borderless:
             problems += [problem for problem in [check.matted(card)] if problem]
         if not problems or source or attempt >= max(1, attempts):

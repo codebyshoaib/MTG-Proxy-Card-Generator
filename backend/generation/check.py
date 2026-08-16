@@ -295,3 +295,137 @@ def matted(card):
         f"{share:.0%} of the card's edge is one flat light colour — a border on a card asked to "
         "run full bleed",
     )
+
+
+# COLOUR IDENTITY, graded against Scryfall and never against the user's UI selections.
+#
+# CLAUDE.md calls this correctness, not preference: "Colour identity comes from Scryfall
+# `color_identity`, never from the art style. Purple reads as black mana in MTG's visual language,
+# so a style palette that injects purple into a mono-green card misstates the card's colour
+# identity. This is a bug the client reported, not a preference."
+#
+# Until now that rule lived only in the brief. `prompts._palette` and `_palette_clause` argue for
+# it and NOTHING measured the result, which is exactly why bd mtg-5pb is intermittent — `ice` on
+# a mono-red Lightning Bolt came back blue-white on one run and red on a rerun with identical
+# inputs. An argument that wins four times in five is a gate that is not there.
+#
+# It takes the FINISHED card and the Scryfall face. It deliberately does not take the style,
+# direction or palette the user picked: those are the thing being guarded against, so a gate that
+# knew about them could be talked out of firing.
+#
+# MEASURED 2026-08-16 over the six-card VERIFY2 batch, sampling pixels with s>0.30 and v>0.25:
+#
+#   Craterhoof   G   23% saturated   green 95%
+#   Tower Winder G   47% saturated   green 72%
+#   Raphael      R   39% saturated   red   88%
+#   Terror       R   51% saturated   red   89%
+#   Elesh Norn   W    7% saturated   (red 78% of a very small share — her cloak)
+#   Sol Ring     C    1% saturated
+#
+# Two populations, and they need two different rules. A card with a hue carries it at 23-51% of
+# the frame and the dominant bucket is its own colour at 72-95%. White and colourless have NO hue,
+# so for them the signal is the absence of one — 1% and 7% — and asking "is the dominant hue
+# correct" of a card with no hue would fail every one of them on whatever scrap of colour it has.
+NEUTRAL_SHARE = 0.15
+"""Below this share of saturated pixels the card is making no colour claim at all.
+
+Sits in the gap between the hueless cards (1%, 7%) and the coloured ones (23-51%)."""
+
+DOMINANT_SHARE = 0.60
+"""Share of the saturated pixels one bucket needs before we call it the card's colour.
+
+Every correct card in the batch ran 72-95%, so this has room under all of them — a card that only
+LEANS wrong is left alone and a card that reads wrong is caught."""
+
+PURPLE_SHARE = 0.15
+"""Purple and magenta together, above which a non-black card is misstating its cost.
+
+Every card in the batch measured 0%. This is the client's own reported bug and the brief already
+calls it absolute, so it is held to a tighter number than the dominant-hue rule."""
+
+# Hue buckets in degrees, and the mana colour each one reads as. Yellow maps to nothing: gold and
+# torchlight are what a white or colourless card is lit by as often as anything else, and failing
+# on it would fire on half the Dark Fantasy catalogue.
+_HUE_BUCKETS = (
+    ("red", 345, 25, "R"),
+    ("orange", 25, 45, "R"),
+    ("yellow", 45, 70, None),
+    ("green", 70, 170, "G"),
+    ("cyan", 170, 200, "U"),
+    ("blue", 200, 255, "U"),
+    ("purple", 255, 300, "B"),
+    ("magenta", 300, 345, "B"),
+)
+
+
+def _hue_bucket(degrees):
+    for name, low, high, colour in _HUE_BUCKETS:
+        if low > high:  # red straddles 0
+            if degrees >= low or degrees < high:
+                return name, colour
+        elif low <= degrees < high:
+            return name, colour
+    return "red", "R"
+
+
+def colour_profile(card, sample=280):
+    """(share of the card that is saturated, {bucket: share of those pixels}).
+
+    Sampled off a downscale: this runs on every card and the answer is a distribution, which a
+    thumbnail preserves and which costs 50x less to compute at 280px than at 1792px.
+    """
+    import colorsys
+
+    image = card.convert("RGB")
+    image = image.resize((sample, round(sample * image.height / image.width)))
+    tally, saturated, total = {}, 0, 0
+    for red, green, blue in image.getdata():
+        total += 1
+        hue, sat, value = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)
+        if sat > 0.30 and value > 0.25:
+            saturated += 1
+            name, _ = _hue_bucket(hue * 360)
+            tally[name] = tally.get(name, 0) + 1
+    if not saturated:
+        return 0.0, {}
+    return saturated / total, {k: v / saturated for k, v in tally.items()}
+
+
+def colour_identity(card, face):
+    """The finished card reading as a colour its cost does not have, or None."""
+    identity = set(face.get("color_identity") or [])
+    share, buckets = colour_profile(card)
+
+    # Purple first: it is the reported bug, it is absolute in the brief, and it fires even on a
+    # card that is otherwise neutral enough to make no claim.
+    purple = buckets.get("purple", 0.0) + buckets.get("magenta", 0.0)
+    if "B" not in identity and share >= NEUTRAL_SHARE and purple >= PURPLE_SHARE:
+        return Problem(
+            "colour_identity",
+            f"{purple:.0%} of this card's colour is purple on a card that is not black — "
+            "purple reads as black mana, so the card misstates its own cost",
+        )
+
+    if share < NEUTRAL_SHARE:
+        return None  # white, colourless, or a scene lit neutrally: no claim to be wrong about
+
+    # Summed PER MANA COLOUR, not per hue bucket. MEASURED 2026-08-16: Counterspell under the
+    # `fire` palette came back blue 53% + cyan 38%, and passed only because neither bucket alone
+    # cleared DOMINANT_SHARE — a red card at 53% would have passed identically. Blue and cyan are
+    # one mana colour to a player, and so are red and orange; splitting them let a card that
+    # plainly reads one colour slip through the dominance test.
+    by_mana = {}
+    for bucket, _low, _high, mana in _HUE_BUCKETS:
+        if mana:
+            by_mana[mana] = by_mana.get(mana, 0.0) + buckets.get(bucket, 0.0)
+    if not by_mana:
+        return None
+    colour, top = max(by_mana.items(), key=lambda kv: kv[1])
+    if top < DOMINANT_SHARE or colour in identity:
+        return None
+    reads = {"W": "white", "U": "blue", "B": "purple", "R": "red", "G": "green"}[colour]
+    return Problem(
+        "colour_identity",
+        f"the card reads {reads} ({top:.0%} of its colour) but its identity is "
+        f"{''.join(sorted(identity)) or 'colourless'} — the palette has outranked the cost",
+    )

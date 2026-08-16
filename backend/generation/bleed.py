@@ -25,12 +25,25 @@ LIGHT = 185
 TOLERANCE = 26
 """How far a pixel may sit from the mat's own colour and still count as part of it."""
 
-MATTED = 0.9
+MATTED = 0.55
 """Share of the ring that has to be mat before we call it one.
 
 High on purpose. A snow scene lights its own edges — the two clean cards in the measured run sat
 at 32% and 3% — so the test is not "is the edge light" but "is the edge one flat colour all the
 way round", which a painted scene never is.
+
+LOWERED FROM 0.9, 2026-08-16. A Comic Book Raphael came back with a white mat on all four sides,
+graded SOUND, and shipped. It measured 0.8828 — it missed the threshold by 0.017, which is a card
+the client would have circled lost to a hundredth.
+
+Re-measured over that batch, and the two populations are nowhere near each other:
+
+    clean    Craterhoof 0.000    Sol Ring 0.107
+    matted   Raphael    0.883
+
+0.9 was not sitting in the gap, it was sitting on top of the only positive example. This sits in
+the middle of the gap instead, the same way CONTRAST_MIN does. There is more than 7x the room
+between the clusters that this threshold needs, so it is not tuned to the one card that failed.
 """
 
 MAX_DEPTH = 0.10
