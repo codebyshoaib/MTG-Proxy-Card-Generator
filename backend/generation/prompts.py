@@ -777,6 +777,48 @@ def _palette(color_identity, strict=False):
             "purple: each of those five reads as a mana colour this card does not have, on the "
             "edge material and the raised surfaces as much as in the scene."
         )
+    # MEASURED 2026-08-16: two of three mono-white cards under `watercolor` misstated their colour.
+    # Serra Angel came back red 98%, was repainted, and came back red 98% again — UNSOUND. Swords
+    # to Plowshares came back red 99% on attempt 1 and only the repaint saved it.
+    #
+    # Structural, like black, for the mirror-image reason. `check._HUE_BUCKETS` maps hues to R, G,
+    # U and B only: white has no hue of its own, so it passes by exactly ONE route — staying under
+    # NEUTRAL_SHARE, i.e. genuinely desaturated. Measured, the white cards that pass sit at 1-7%
+    # saturation. Any warm cast at all puts a white card over the line.
+    #
+    # And the clause below was pushing it there. Read back to a white card it says the white
+    # "belongs to the LIGHT — glows, FLAMES, energy, rim light, the HOT SPOTS", and that it "must
+    # read as the brightest thing ... which is what makes it READ HOT". Watercolour's warm paper
+    # needed no encouragement.
+    #
+    # So white keeps its brightness and loses its warmth. Gold and brass stay allowed as MATERIAL —
+    # the material-versus-light distinction this clause already draws for every other colour — but
+    # never as the light lying over the scene.
+    if set(color_identity) == {"W"}:
+        return (
+            "This card's colour identity is WHITE, and white is not a hue — it is the ABSENCE of "
+            "one. Do not look for a white version of a coloured glow. This card reads white by "
+            "being PALE AND CLEAN: bleached stone, marble, bone, chalk, plaster, undyed linen, "
+            "pale sky, clear air, with the light itself white or the faintest silver. "
+            "NO WARM CAST over the picture: no amber, no sepia, no golden-hour wash, no firelight, "
+            "no candlelight, no sunset. Warm light reads as red mana and would misstate this "
+            "card's cost — it is the one thing that has actually gone wrong on white cards. "
+            "Gold, brass and warm stone may appear as MATERIAL the light falls on, never as the "
+            "light itself. "
+            # A "PALE IS NOT EMPTY" sentence was added here and REMOVED, 2026-08-16, because it
+            # was measured and did nothing: Serra Angel under watercolor scored 0.63 matted before
+            # it and 0.68 then 0.61 after. Watercolour paints washy pale edges and the wording
+            # does not reach that. Left as a comment so the next person does not re-add it —
+            # the white/watercolour matted interaction is a gate question, not a brief one.
+            "THE SUBJECT KEEPS ITS OWN COLOUR even when that colour is not the card's: a green "
+            "turtle on a white card stays green, a red cloak stays red. Keep the picture bright "
+            # "do not drain it to monochrome" is kept word for word: mono-white Frodo came back
+            # greyscale when "and nothing else" outranked the subject's own colour (bd mtg-roq),
+            # and `test_the_palette_lights_the_scene_and_does_not_repaint_the_subject` guards that
+            # phrase on this branch as well as the generic one.
+            "and high-key and let colour stay quiet: do not drain it to monochrome, simply never "
+            "warm it."
+        )
     # MEASURED 2026-08-16: mono-black is the only identity that has never passed
     # `check.colour_identity`. Obliterator came back red 79% under the `pastel` palette and red
     # 100% under `oil_painting`, a plain style with nothing fighting it — four failures, two

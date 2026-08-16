@@ -194,6 +194,38 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("NO WARM LIGHT", black)
         self.assertNotIn("belongs to the LIGHT", black)
 
+    def test_white_is_the_absence_of_hue_and_is_never_lit_warm(self):
+        """MEASURED 2026-08-16: two of three mono-white cards under `watercolor` misstated their
+        colour. Serra Angel came back red 98%, was repainted, and came back red 98% again —
+        UNSOUND. Swords to Plowshares came back red 99% on attempt 1 and only a repaint saved it.
+
+        Structural, like black, and for the mirror-image reason. `check._HUE_BUCKETS` maps hues to
+        R, G, U and B only: white has no hue of its own, so it can pass by exactly ONE route —
+        staying under NEUTRAL_SHARE, i.e. genuinely desaturated. Any warm cast at all puts it over.
+
+        And the generic clause was pushing it there. Read back to a white card it said the white
+        "belongs to the LIGHT — glows, FLAMES, energy, rim light, the HOT SPOTS" and "must read as
+        the brightest thing ... which is what makes it READ HOT". Watercolour's warm paper needed
+        no encouragement.
+
+        White's brightness stays; its warmth goes. Gold armour and brass are still allowed as
+        MATERIAL — the distinction the rest of this clause already draws — but never as the light
+        over the scene."""
+        white = prompts.art_only({**GREEN, "color_identity": ["W"]})
+        self.assertIn("NO WARM CAST", white)
+        self.assertNotIn("read hot", white)
+        self.assertNotIn("flames", white)
+
+    def test_the_other_colours_keep_the_emissive_clause_they_were_measured_on(self):
+        """Only white and mono-black are carved out. Red, green and blue all have a hue `check`
+        can read back, and the emissive wording is verified on them under a hostile palette
+        (COLOUR-2026-08-16: red 74%, green 83%, blue 91%, all PASS)."""
+        for identity in (["R"], ["G"], ["U"], ["W", "U"]):
+            with self.subTest(identity=identity):
+                brief = prompts.art_only({**GREEN, "color_identity": identity})
+                self.assertIn("belongs to the LIGHT", brief)
+                self.assertNotIn("NO WARM CAST", brief)
+
     def test_a_black_card_with_a_partner_colour_keeps_the_emissive_clause(self):
         """B/R and B/G have a partner colour that does own an emissive, so the generic clause has
         something to assign and has not been measured failing. Widening the black branch to cover
