@@ -425,6 +425,26 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn("as long as the ORDER down the card is kept", brief)
         self.assertIn("stay straight and level", brief)
 
+    def test_a_flat_face_is_square_to_the_viewer_and_ends_at_a_definite_edge(self):
+        """Both measured on one card, 2026-08-16, the first batch after "straight-sided" went in
+        (bd mtg-cig). Straight-sided constrains the OUTLINE and neither of these is an outline.
+
+        PLANE: Elesh Norn's P/T came back a broken stone slab lying flat on the ground and receding
+        away from the camera. "4/7" is composited square onto it, so the number sits on a plane the
+        art says is horizontal and reads as pasted on. It satisfied straight-sided — the slab IS a
+        rectangle — and `panels.detect` and `check` both passed it.
+
+        EDGE: the pastel Obliterator's rules slab fades into dark mud rather than ending. Row-mean
+        lightness down its detected box runs 111-171 to y0.877 and then 82, 54, 39, 34 — the
+        painted face stops near y0.885 and the box runs to y0.940, so the last line is set in dark
+        ink on the artwork. `printable_face` returns that box unchanged because it peels width
+        only, `plate_extent` grows the bottom further, and the card's UNSOUND [panel_too_dark] at
+        4.53:1 is this defect being sampled rather than a panel that is genuinely too dark.
+        """
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("square to the viewer", brief)
+        self.assertIn("ENDS at a definite edge", brief)
+
     def test_the_word_borderless_in_the_notes_turns_the_mode_on(self):
         """The client's own workflow on the reference site is typing "borderless" into Custom Art
         Notes, so the word arriving in `notes` has to do what the argument does — and the note is

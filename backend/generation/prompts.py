@@ -1131,6 +1131,30 @@ def creative_full(
             "Torn corners, curled rods, carved ends and chipped stone all sit OUTSIDE that "
             "rectangle, added around it. A surface that narrows as it goes down loses the text "
             "printed on it.",
+            # Straight-sided constrains the OUTLINE, and neither of the two faults below is an
+            # outline. Both were measured on the first batch generated under it (bd mtg-cig).
+            #
+            # PLANE. Elesh Norn's P/T came back a broken stone slab lying flat on the ground,
+            # receding away from the camera. "4/7" is composited square onto it, so the number sits
+            # on a plane the art says is horizontal and reads as pasted on. It satisfied
+            # straight-sided — the slab IS a rectangle — and `panels.detect` and `check` both
+            # passed it, because an axis-aligned box cannot express which way a surface faces.
+            #
+            # EDGE. The pastel Obliterator's rules slab fades into dark mud instead of ending. Row
+            # means down its detected box run 111-171 to y0.877, then 82, 54, 39, 34: the painted
+            # face stops near y0.885 and the box runs to y0.940, so the last line is set in dark
+            # ink on artwork. `printable_face` peels width only and hands that box straight back,
+            # `plate_extent` grows the bottom further still, and the card's UNSOUND
+            # [panel_too_dark] at 4.53:1 is this defect being sampled rather than a panel that is
+            # really too dark. A vertical peel is the fourth-time-cleverer move the 2026-08-16
+            # handover warns off; the shape is constrained instead, and the peel stays in reserve.
+            "Each flat face is turned square to the viewer, seen straight on the way a sign nailed "
+            "to a post is — never lying flat in the scene, never receding into the distance, never "
+            "tilted away. A number or a line of text set on a receding surface reads as pasted on.",
+            "Every flat face ENDS at a definite edge on all four sides — a rim, a lip, a moulding, "
+            "a fold, or a hard change of material. It never fades out, dissolves, crumbles or "
+            "blends into the scene behind it. Where the face stops it stops sharply, because text "
+            "printed past that point lands on the artwork.",
             f"Paint exactly these {total} raised surfaces and no others: "
             + "; ".join(surfaces)
             + ".",
