@@ -578,6 +578,27 @@ def _palette_clause(palette, color_identity):
         # Colourless already forbids all five hues by name; adding a second, weaker restatement
         # here would give the model two rules to reconcile instead of one to follow.
         return f"Colour treatment: {treatment}."
+    # MONO-BLACK, and this branch mirrors the one in the identity paragraph for the same measured
+    # reason (bd mtg-x6v). The generic wording below hands a black card an instruction it cannot
+    # obey — "the black stays the brightest and hottest thing in the frame" — and a card that
+    # cannot obey a sentence follows the one next to it instead. Under `fire` those two sentences
+    # read, in order: NO WARM LIGHT, no fire, no embers / lit by flame, embers and heat haze / the
+    # black stays hottest. Measured on Phyrexian Obliterator: red 100%, then red 74% on the
+    # repaint, then red 74% again after the repaint was told why. Three calls, no card.
+    #
+    # So the tiebreak is restated in terms black actually has. Same lever as the identity
+    # paragraph: say what this card's colour DOES, never what it must not do alone.
+    if set(color_identity) == {"B"}:
+        return (
+            f"Colour treatment: {treatment}. Take from it the MATERIALS, the texture and the "
+            "sense of place — never the warmth. Black has no light of its own, so a treatment "
+            "that offers fire, embers, lava, sunset, sunlight or gold is offering another "
+            "colour's light, and this card may not borrow it. Render that treatment cold and "
+            "low-key instead: the same place after the fire has gone out, deep shadow holding "
+            "most of the frame, what light there is violet, bruised purple, corpse-green or "
+            "bone-white. Where the treatment and this card's blackness disagree, the BLACKNESS "
+            "wins."
+        )
     names = " and ".join(COLOURS[c] for c in color_identity if c in COLOURS)
     return (
         f"Colour treatment: {treatment}. This is the QUALITY OF THE LIGHT and the finish, not a "

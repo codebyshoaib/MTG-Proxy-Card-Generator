@@ -1081,3 +1081,39 @@ class RepaintCorrectionTests(SimpleTestCase):
             brief.index("ABSOLUTE REQUIREMENT"),
             "a correction must not be the final word; painted lettering ruins the card outright",
         )
+
+
+class MonoBlackPaletteTests(SimpleTestCase):
+    """A palette may not hand a black card the one thing black cannot have (bd mtg-x6v).
+
+    MEASURED 2026-08-16 on Phyrexian Obliterator under `fire`: red 100%, red 74% on the repaint,
+    red 74% again after the repaint was told why. The identity paragraph already says NO WARM
+    LIGHT; the palette clause then said the black "stays the brightest and hottest thing in the
+    frame", which a black card cannot do, so the only actionable sentence left was the palette's
+    own "lit by flame, embers and heat haze".
+    """
+
+    BLACK = {**GREEN, "name": "Phyrexian Obliterator", "color_identity": ["B"]}
+
+    def test_a_black_card_is_never_told_to_be_the_hottest_thing_in_the_frame(self):
+        brief = prompts.creative_full(self.BLACK, palette="fire")
+        self.assertNotIn("brightest and hottest thing in the frame", brief)
+
+    def test_the_warm_treatment_is_explicitly_refused_for_black(self):
+        brief = prompts.creative_full(self.BLACK, palette="fire")
+        self.assertIn("lit by flame, embers and heat haze", brief, "the palette still reaches it")
+        self.assertIn("may not borrow it", brief)
+        self.assertIn("the BLACKNESS", brief)
+
+    def test_every_other_identity_keeps_the_hottest_thing_tiebreak(self):
+        """The generic wording is measured working on the other four (bd mtg-5pb) — black is the
+        only identity it cannot be phrased for."""
+        for identity in ("W", "U", "R", "G"):
+            brief = prompts.creative_full({**GREEN, "color_identity": [identity]}, palette="fire")
+            self.assertIn("brightest and hottest thing in the frame", brief)
+
+    def test_a_black_card_with_a_partner_colour_keeps_the_generic_clause(self):
+        """B/R and B/G have a partner that does own an emissive, so the generic clause has
+        something to assign — and has not been measured failing there."""
+        brief = prompts.creative_full({**GREEN, "color_identity": ["B", "R"]}, palette="fire")
+        self.assertIn("brightest and hottest thing in the frame", brief)
