@@ -337,6 +337,21 @@ DOMINANT_SHARE = 0.60
 Every correct card in the batch ran 72-95%, so this has room under all of them — a card that only
 LEANS wrong is left alone and a card that reads wrong is caught."""
 
+OWN_SHARE_MIN = 0.40
+"""Share of the saturated pixels a card must show of its OWN colour, once it claims any colour.
+
+`DOMINANT_SHARE` asks whether the LEADER is a colour the card lacks. It cannot catch a card whose
+wrong colour is split across two mana colours, because neither leader clears the bar. MEASURED
+2026-08-16: mono-black Vampiric Tutor under `rick_and_morty` came back a plainly green card — G
+43%, U 38%, B 16%, at 0.463 saturation — and passed with its own colour in third place.
+
+Fitted between the two measured populations, which are far apart: correct cards above
+NEUTRAL_SHARE ran 73-100% own colour (n=8, R/G/U over four batches) and that failure sat at 16%.
+
+Only applies to identities with a hue to show. `_HUE_BUCKETS` maps hues to R, G, U and B alone —
+white is signalled by the absence of hue and colourless claims none — so white and colourless have
+an own-share of 0 by construction, and this test would fail every saturated one of them."""
+
 PURPLE_SHARE = 0.15
 """Purple and magenta together, above which a non-black card is misstating its cost.
 
@@ -356,6 +371,10 @@ _HUE_BUCKETS = (
     ("purple", 255, 300, "B"),
     ("magenta", 300, 345, "B"),
 )
+
+
+_HUED = {mana for _name, _low, _high, mana in _HUE_BUCKETS if mana}
+"""The mana colours a hue can actually express — R, G, U, B. See `OWN_SHARE_MIN`."""
 
 
 def _hue_bucket(degrees):
@@ -420,12 +439,26 @@ def colour_identity(card, face):
             by_mana[mana] = by_mana.get(mana, 0.0) + buckets.get(bucket, 0.0)
     if not by_mana:
         return None
+    names = {"W": "white", "U": "blue", "B": "purple", "R": "red", "G": "green"}
     colour, top = max(by_mana.items(), key=lambda kv: kv[1])
-    if top < DOMINANT_SHARE or colour in identity:
-        return None
-    reads = {"W": "white", "U": "blue", "B": "purple", "R": "red", "G": "green"}[colour]
-    return Problem(
-        "colour_identity",
-        f"the card reads {reads} ({top:.0%} of its colour) but its identity is "
-        f"{''.join(sorted(identity)) or 'colourless'} — the palette has outranked the cost",
-    )
+    if colour in identity:
+        return None  # the card leads on a colour it actually has
+    if top >= DOMINANT_SHARE:
+        return Problem(
+            "colour_identity",
+            f"the card reads {names[colour]} ({top:.0%} of its colour) but its identity is "
+            f"{''.join(sorted(identity)) or 'colourless'} — the palette has outranked the cost",
+        )
+
+    # No single wrong colour dominates, and the leader is still not one of this card's. That is
+    # the case dominance cannot see: two wrong colours sharing the frame, each under the bar.
+    # Asked the other way round — how much of this card is its OWN colour — it is obvious.
+    own = sum(by_mana.get(one, 0.0) for one in identity)
+    if identity & _HUED and own < OWN_SHARE_MIN:
+        return Problem(
+            "colour_identity",
+            f"only {own:.0%} of this card's colour is its own "
+            f"({'/'.join(names[one] for one in sorted(identity))}) — it reads "
+            f"{names[colour]} at {top:.0%} on a card that is not",
+        )
+    return None

@@ -347,6 +347,53 @@ class ColourIdentityTests(SimpleTestCase):
         ImageDraw.Draw(image).rectangle([0, 0, 199, 99], fill=(40, 90, 210))  # half blue
         self.assertIsNone(check.colour_identity(image, {"color_identity": ["G"]}))
 
+    def test_a_card_showing_almost_none_of_its_own_colour_fails(self):
+        """MEASURED 2026-08-16: mono-black Vampiric Tutor under `rick_and_morty` came back a
+        plainly GREEN card — acid portals, green slime, green monitors — and passed. By mana it
+        was G 43%, U 38%, B 16%, R 3% at 0.463 saturation: its own colour was THIRD, and it
+        escaped because no single wrong colour cleared DOMINANT_SHARE.
+
+        Summing per mana colour fixed the case where ONE colour was split across two hue buckets.
+        It cannot help when TWO wrong colours share the frame, which is what a busy style row
+        produces. The gate asked "is the leader a colour this card lacks" and never "does this
+        card show any of its own colour at all".
+
+        OWN_SHARE_MIN is fitted between the two measured populations: correct cards above
+        NEUTRAL_SHARE ran 73-100% own colour (n=8, R/G/U across four batches), the failure sat at
+        16%."""
+        # The Tutor's own proportions: no wrong colour clears DOMINANT_SHARE, so dominance cannot
+        # fire and only the own-share test can.
+        image = Image.new("RGB", (200, 200), (40, 190, 70))                     # green 44%
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 111], fill=(40, 90, 210))   # blue 40%
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 31], fill=(150, 60, 200))   # its own 16%
+        problem = check.colour_identity(image, {"color_identity": ["B"]})
+        self.assertIsNotNone(problem, "a card showing almost none of its own colour escaped")
+        self.assertIn("its own", problem.detail)
+
+    def test_white_and_colourless_are_exempt_because_they_have_no_hue_to_show(self):
+        """`_HUE_BUCKETS` maps hues to R, G, U and B only — there is deliberately no white bucket,
+        because white is signalled by the ABSENCE of hue and colourless has no colour to claim.
+        Their own-share is therefore 0 by construction, and applying the own-colour test to them
+        would fail every saturated white card including correct ones. They are judged by
+        NEUTRAL_SHARE and by dominance, exactly as before."""
+        # Neither colour clears DOMINANT_SHARE, so dominance cannot fire and the own-share test is
+        # the only thing that could — which is the point of the fixture.
+        image = Image.new("RGB", (200, 200), (40, 190, 70))                    # green 55%
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 89], fill=(40, 90, 210))   # blue 45%
+        for identity in (["W"], []):
+            with self.subTest(identity=identity):
+                problem = check.colour_identity(image, {"color_identity": identity})
+                self.assertIsNone(problem, "own-share must not judge a colour with no hue")
+
+    def test_a_dominant_colour_of_its_own_is_still_a_pass_at_a_low_share(self):
+        """The own-share test must not fire when the leader IS the card's colour. A green card
+        leading on green at 35%, under OWN_SHARE_MIN, is a mixed scene rather than a wrong one —
+        the same tolerance `test_a_mixed_scene_is_not_a_failure` protects."""
+        image = Image.new("RGB", (200, 200), (40, 190, 70))                    # green leads
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 63], fill=(40, 90, 210))   # blue
+        ImageDraw.Draw(image).rectangle([0, 0, 199, 31], fill=(230, 130, 40))  # orange
+        self.assertIsNone(check.colour_identity(image, {"color_identity": ["G"]}))
+
     def test_the_gate_takes_no_user_selection(self):
         """The style, direction and palette are what it guards against, so it must not be able to
         see them — a gate that took the selection could be talked out of firing by it."""
