@@ -1260,6 +1260,24 @@ def creative_full(
         "The top plate and the narrow strip are DARK — near-black obsidian, blackened iron, "
         "deep oxblood, weathered bronze — because warm gold lettering is printed on them "
         "afterwards.",
+        # CLIENT 2026-08-16: "some P/T are large some small and small pure black dull ugly".
+        #
+        # This paragraph governed three surfaces and left the tab — the fourth display surface —
+        # to take its value from the art. `compositor.panel_palette` then branched on whatever
+        # came back: under luminance 128 the numerals are GOLD, stroked, with a saturated shadow;
+        # over it they are unstroked near-black. MEASURED over nine cards, six tabs landed dark
+        # (71-126) and three landed pale (151-162), so the same field alternated between the
+        # handsome treatment and flat black on grey stone. The threshold is a cliff in the middle
+        # of that range, so two near-identical cards flip.
+        #
+        # Sampling the surface is right for the rules slab, where real cards do print black on
+        # parchment. The tab has no such freedom: every Magic card ever printed sets its P/T as
+        # light numerals on a dark plate. So its value is pinned like the other two display
+        # surfaces, and the compositor needs no change — panel_palette picks gold on its own.
+        "The tab at the bottom right is DARK too, the same family as the top plate — dark stone, "
+        "blackened metal, dark wood, dark horn — because warm gold numerals are printed on it "
+        "afterwards. A pale tab makes those numerals flat black on pale rock, which is the one "
+        "part of the card that then looks unfinished.",
         # "Glowing amber stone" used to be in this list and is now excluded by name. MEASURED on
         # the eight-card Ice batch, job 10746c0b: it was the only MID-value entry among otherwise
         # pale materials, and on red and green cards the model reached for it because it matched

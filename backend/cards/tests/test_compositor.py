@@ -28,6 +28,35 @@ def card(shade):
     return Image.new("RGBA", (1792, 2400), shade + (255,))
 
 
+class PTSizeTests(SimpleTestCase):
+    """CLIENT 2026-08-16: "some P/T are large some small".
+
+    `_display` sized the P/T at `box_height * PT_SIZE`. PT_SIZE is fixed, the box is not: across
+    nine cards generated that day `panels.detect` returned P/T boxes from 0.050 to 0.180 of the
+    card's height, so the numerals ran 74 to 268 px on identically sized cards — a 3.6x spread of
+    the same field. Nothing tied the P/T to the CARD; it was sized by whatever tab the model
+    happened to paint, and moving PT_SIZE moves every card together without narrowing the spread.
+
+    The size is now taken from the card and only clamped to fit the box, so a tiny tab no longer
+    drags the numerals down with it.
+    """
+
+    def _pt_height(self, pt_box):
+        return compositor._pt_size(compositor._box(pt_box, (1792, 2400)), 2400)
+
+    def test_the_spread_across_the_measured_boxes_is_far_below_the_old_one(self):
+        heights = [self._pt_height((0.80, y0, 0.94, y1)) for y0, y1 in (
+            (0.890, 0.940), (0.880, 0.940), (0.840, 0.940),
+            (0.820, 0.930), (0.860, 0.980), (0.780, 0.960),
+        )]
+        self.assertLess(max(heights) / min(heights), 2.2, heights)
+
+    def test_the_numerals_still_fit_the_tab_they_are_printed_on(self):
+        for y0, y1 in ((0.890, 0.940), (0.780, 0.960)):
+            box = compositor._box((0.80, y0, 0.94, y1), (1792, 2400))
+            self.assertLessEqual(compositor._pt_size(box, 2400), box[3] - box[1])
+
+
 class InkTests(SimpleTestCase):
     def test_a_dark_surface_gets_light_ink_and_a_light_one_gets_dark(self):
         """The surfaces are painted per card: measured across three cards one slab came back

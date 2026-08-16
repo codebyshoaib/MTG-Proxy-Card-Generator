@@ -55,8 +55,27 @@ TYPE_SIZE = 0.66
 # Ceiling as a fraction of CARD height. Their rules text fills its panel; ours sat at half the
 # size and floated in empty stone, because this was 0.030.
 RULES_SIZE = 0.055
-# Power/toughness as a fraction of its tab's height.
-PT_SIZE = 0.62
+# Power/toughness. CLIENT 2026-08-16: "some P/T are large some small".
+#
+# This used to be a fraction of the TAB's height alone, and the tab is whatever the model painted:
+# MEASURED over nine cards the same day, `panels.detect` returned P/T boxes from 0.050 to 0.180 of
+# card height, so the numerals ran 74 to 268 px on identically sized cards. Moving the fraction
+# moved all nine together and narrowed nothing, because the spread is in the multiplicand.
+#
+# So the size comes from the CARD and the tab only clamps it. PT_CARD_SIZE is fitted between the
+# two populations in that batch: the cards that read well sat at 149-179 px (0.062-0.075 of card
+# height) and the ones the client called small sat at 74-89 (0.031-0.037). The clamp keeps the
+# numerals inside a tab that is smaller or larger than the target, which is what stops this
+# reintroducing overflow on the small tabs it exists to help.
+PT_CARD_SIZE = 0.068
+PT_MIN_OF_BOX, PT_MAX_OF_BOX = 0.45, 0.85
+
+
+def _pt_size(box, card_height):
+    """P/T cap height: taken from the card, clamped to the tab it is printed on."""
+    height = box[3] - box[1]
+    return max(11, round(min(max(card_height * PT_CARD_SIZE,
+                                 height * PT_MIN_OF_BOX), height * PT_MAX_OF_BOX)))
 # Below this fraction of card height the type is too small to be read across a table, and the
 # real cause is a slab the AI painted too small — Craterhoof came back with visibly smaller text
 # than three other cards in the same batch. Type size varying card to card is worse in a deck
@@ -513,7 +532,8 @@ def compose(png, face, panels, include_flavor_text=False):
         # measured 12/12 today against 35% when it was briefed as a shield, and the tab is asked
         # for with a flat even face rather than a pointed rim.
         pt = f"{face['power']}/{face['toughness']}"
-        _display(image, pt, _box(panels["pt"], image.size), PT_SIZE, light)
+        pt_box = _box(panels["pt"], image.size)
+        _display(image, pt, pt_box, None, light, size=_pt_size(pt_box, image.height))
     return image, overflowed
 
 
@@ -580,12 +600,18 @@ def _title(image, face, box, light=(1, 1)):
     _stamp(image, layer, box, size, shadow, light)
 
 
-def _display(image, text, box, size_fraction, light=(1, 1)):
-    """Type line and P/T: centred, embossed, stroked."""
+def _display(image, text, box, size_fraction, light=(1, 1), size=None):
+    """Type line and P/T: centred, embossed, stroked.
+
+    `size` overrides the box-relative sizing. The P/T passes it, because sizing that field off its
+    own box is what made it vary 3.6x across a batch; the type line does not, because its plate
+    spans most of the card and its height is the size (`test_height_is_never_peeled_because_height
+    _is_the_type_size`).
+    """
     x0, y0, x1, y1 = box
     fill, stroke, shadow = panel_palette(image, box, display=True)
     height, available = y1 - y0, (x1 - x0) * (1 - 2 * PAD)
-    size = max(11, round(height * size_fraction))
+    size = size or max(11, round(height * size_fraction))
     font = ImageFont.truetype(str(fonts.DISPLAY), size)
     tracking = size * TRACKING
     while size > 11 and _tracked_width(font, text, tracking) > available:

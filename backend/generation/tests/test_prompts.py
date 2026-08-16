@@ -425,6 +425,24 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertIn("as long as the ORDER down the card is kept", brief)
         self.assertIn("stay straight and level", brief)
 
+    def test_the_pt_tab_is_dark_like_the_other_two_display_surfaces(self):
+        """CLIENT 2026-08-16: "some P/T are large some small and small pure black dull ugly".
+
+        The VALUE paragraph governed the top plate, the narrow strip and the broad strip, and said
+        nothing about the tab — the only display surface left free. So its value came out of the
+        art, and `compositor.panel_palette` branched on it: below luminance 128 the numerals are
+        GOLD with a stroke and a saturated shadow, above it they are unstroked near-black. Measured
+        over nine cards, six landed dark (71-126) and three landed pale (151-162), so the same
+        field alternated between the handsome treatment and flat black on grey stone.
+
+        The tab is a display surface and Magic's convention for it is fixed — dark plate, light
+        numerals, on every card ever printed. Pinning its value is the same fix the other two
+        display surfaces already have, and it costs the compositor nothing: panel_palette then
+        picks gold on its own."""
+        brief = prompts.creative_full({**GREEN, "power": "5", "toughness": "5"})
+        value = brief[brief.index("VALUE, and getting this wrong"):]
+        self.assertIn("The tab at the bottom right is DARK", value)
+
     def test_a_flat_face_is_square_to_the_viewer_and_ends_at_a_definite_edge(self):
         """Both measured on one card, 2026-08-16, the first batch after "straight-sided" went in
         (bd mtg-cig). Straight-sided constrains the OUTLINE and neither of these is an outline.
