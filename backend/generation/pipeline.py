@@ -139,9 +139,13 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
     paragraphs = len([p for p in (face.get("oracle_text") or "").split("\n") if p.strip()]) or None
 
     attempt = 0
+    corrections = []
     while True:
         attempt += 1
-        png = source if source else _paint(face, licensed, reference, options, note)
+        png = (
+            source if source
+            else _paint(face, licensed, reference, options, note, corrections)
+        )
 
         # Before anything measures this image: cut the margin the model painted around it. Done
         # here rather than after compositing so the panel boxes and every coordinate downstream
@@ -186,14 +190,14 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
             problems += [problem for problem in [check.matted(card)] if problem]
         if not problems or source or attempt >= max(1, attempts):
             return Result(card, problems, detected, None if source else png)
-        note(
-            f"attempt {attempt}: "
-            + "; ".join(problem.detail for problem in problems)
-            + " — repainting"
-        )
+        # The grader's own wording, handed straight to the repaint (bd mtg-x6v). A retry used to
+        # re-send the identical brief, which on the measured failure changed nothing it could not
+        # have changed by luck.
+        corrections = [problem.detail for problem in problems]
+        note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
 
 
-def _paint(face, licensed, reference, options, note):
+def _paint(face, licensed, reference, options, note, corrections=()):
     """One image call: the card's art and its blank furniture, as PNG bytes.
 
     Tries the card's own NAME first and falls back to its game identity only once the model has
@@ -208,6 +212,7 @@ def _paint(face, licensed, reference, options, note):
             face, options.art_style, reference=bool(reference), licensed=as_identity,
             direction=options.art_direction, palette=options.color_palette,
             notes=options.custom_art_notes, borderless=options.borderless,
+            corrections=corrections,
         )
 
     if not (licensed and refusals.is_refused(face["name"])):

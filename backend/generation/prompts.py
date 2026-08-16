@@ -76,6 +76,21 @@ STRIP_STEP = 0.02
 # reference site sizes panels to the text (HOW-THEY-DO §6) and that is the look being matched, so
 # this is a floor rather than a fixed size.
 STRIP_MIN = 1 / 8
+
+STRIP_FOOT = 0.92
+"""Where the broad strip's bottom edge sits, as a fraction down the card.
+
+MEASURED 2026-08-16 with our own `panels.detect` over the reference site's six wordiest creature
+cards (224-346 characters of oracle text), pulled full-resolution from their CDN:
+
+    scourge-346   y 0.628-0.920    defiler-288  y 0.630-0.918    gearhulk-224  y 0.636-0.928
+    overlord-294  y 0.638-0.907    azor-246     y 0.658-0.925
+
+Five of five put the foot at 0.907-0.928 and the top at 0.628-0.658, so the strip is 0.27-0.29 of
+the card and it STARTS ABOVE THE LOWER THIRD, with scene continuing below it. That geometry is
+what the brief now states, because the wording it replaces asked for the opposite and the model
+obeyed the opposite — see the band clause in `_surfaces`.
+"""
 # Capped at a THIRD, measured rather than chosen: a real printed card gives its text box roughly
 # 28-30%, so a third for the wordiest cards is what Magic itself does. Capping lower guaranteed a
 # repaint on any card over ~270 characters, because the brief would then be asking for a surface
@@ -875,7 +890,7 @@ def _palette(color_identity, strict=False):
 
 def creative_full(
     face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None,
-    borderless=True,
+    borderless=True, corrections=(),
 ):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
@@ -1010,10 +1025,28 @@ def creative_full(
     # purpose, because the whole design is that we composite the words and it paints the surface.
     # So the room its text needs is measured with the compositor's own engine and stated.
     room = _strip_height(face)
+    # WHERE IT STARTS, not "across the lower third" (bd mtg-8h9, measured 2026-08-16). That phrase
+    # named a POSITION and was read as a SIZE: the lower third is 33%, and on a wordy card the very
+    # next clause asks the flat face alone to be at least that much. So the brief demanded a strip
+    # that exactly filled the lower third, while three separate clauses — the picture continuing
+    # through the lower third, the narrow strip sitting above it, and the artwork dominating — all
+    # pushed the other way. Three against one, and the model resolved it by shrinking: Ulamog asked
+    # 33% and painted 19%.
+    #
+    # Across 40 stored detections the painted height is uncorrelated with how much text the card
+    # has, which is what a contradiction looks like from the outside — Lightning Bolt at 44
+    # characters ranged 0.107 to 0.298 over five runs, while Ulamog at 281 got 0.190.
+    #
+    # Same class of bug as bd mtg-cjx, and the same fix: say one thing. The strip's foot and top
+    # are now stated as coordinates taken off the reference site's own cards (see STRIP_FOOT), so
+    # a taller strip grows UPWARD out of the lower third instead of being trapped inside it.
+    top = f"{(STRIP_FOOT - room[0]) * 100:.0f}%" if room else "60%"
     band = (
-        "ONE broad pale strip across the lower third, "
+        f"ONE broad pale strip low on the card, its foot about {STRIP_FOOT * 100:.0f}% of the way "
+        f"down and its top edge about {top} of the way down, with painted scene continuing below "
+        "it to the bottom edge, "
         + (
-            f"whose FLAT PALE FACE is AT LEAST {room[1]} of the card's height — that is the "
+            f"so that its FLAT PALE FACE is AT LEAST {room[1]} of the card's height — that is the "
             "clear even area alone, measured inside its rim and NOT counting the curled rods, "
             "carved ends, torn edges or anything crossing it. This card's rules text needs "
             "exactly that much clear room to be read across a table, and a shorter face makes "
@@ -1364,8 +1397,13 @@ def creative_full(
         # quarter plus the top plate plus the narrow strip is already over a third. A brief that
         # asks for two incompatible things gets one of them at random, which is the same class of
         # bug as bd mtg-cjx.
+        # "and the strip is a BAND across the lower third — never half the card" USED TO FOLLOW
+        # HERE. Removed 2026-08-16: it re-capped the strip at the lower third, 33%, immediately
+        # after the surface list had asked for a flat face of at least that much on a wordy card.
+        # The budget below already bounds the surfaces, and it is derived from the strip's own ask,
+        # so the cap and the demand cannot disagree. The removed sentence could only ever disagree.
         + f"The raised surfaces together may cover no more than {_surface_budget(face)} of the "
-        "card's height, and the strip is a BAND across the lower third — never half the card.",
+        "card's height.",
         (
             "The raised surfaces may not cover the subject's head, face or silhouette."
             if borderless
@@ -1376,7 +1414,7 @@ def creative_full(
         QUALITY,
         "",
         "Put the subject's face and focal point in the UPPER-MIDDLE of the card, clear of the "
-        "lower strip. Nothing COMPETES for attention in the lower third — no second subject, no "
+        "lower strip. Nothing COMPETES for attention low on the card — no second subject, no "
         "bright hotspot, no dense detail.",
         # The previous wording — "nothing that matters may sit in the lower third" — is what bd
         # mtg-9ww recorded failing: asked to keep the lower half calm, the model stopped painting
@@ -1384,10 +1422,16 @@ def creative_full(
         # legibility needs an EVEN, QUIET CONTINUATION of the scene, not an absence of scene. A
         # blank lower third also loses the client's "not a rectangle inside a frame" requirement,
         # because the art visibly stops where the furniture starts.
-        "But the picture CONTINUES through the lower third and out to the bottom edge — ground, "
-        "haze, smoke, embers, water, drifting cloth, the scene going quiet at low contrast and "
-        "low detail. It never stops into a blank panel, a flat wash or bare canvas. Calm is the "
-        "scene continuing softly, not the scene ending.",
+        # "through the lower third" until 2026-08-16. On a wordy card the broad strip legitimately
+        # OCCUPIES the lower third, so that phrasing asked the picture to continue through the one
+        # place a panel was also required to be — and was one of the three clauses squeezing the
+        # strip (see the band clause). Re-aimed at the scene AROUND the surfaces, which is what bd
+        # mtg-9ww actually needs and what the reference does: its strip's foot sits at 0.92 and
+        # painted scene runs on below it.
+        "But the picture CONTINUES around and below the raised surfaces, out to the bottom edge — "
+        "ground, haze, smoke, embers, water, drifting cloth, the scene going quiet at low contrast "
+        "and low detail. It never stops into a blank panel, a flat wash or bare canvas. Calm is "
+        "the scene continuing softly, not the scene ending.",
         "Keep every raised surface and every important detail inside the middle 92% of the "
         "canvas — the outer edge is trimmed off when the card is cut.",
         "Output ONE image filling the entire frame, edge to edge.",
@@ -1549,6 +1593,28 @@ def creative_full(
             "not in the light, "
             + ("" if borderless else "not in the edge material, ")
             + "not in any surface. Purple reads as black mana and this card is not black."
+        )
+
+    # THE REPAINT KNOWS WHY IT IS A REPAINT (bd mtg-x6v). Until 2026-08-16 a retry re-sent the
+    # identical brief and hoped the dice fell differently, which on a mono-black card under the
+    # `fire` palette measurably does not work: attempt 1 read 100% red, attempt 2 read 48% red,
+    # and both were rejected. Two paid calls, no card.
+    #
+    # That 100 -> 48 shift is the argument for doing this rather than adding a third attempt. The
+    # model moves a long way when the brief changes; it was never told the brief had changed,
+    # because it was not told anything. The grader's own sentence is reused verbatim — it is
+    # already written for a human, it already names the measurement, and inventing a second
+    # phrasing here would let the two drift.
+    #
+    # Placed last among the late clauses, and still before the lettering ban, whose final position
+    # is measured.
+    if corrections:
+        before_the_writing_ban(
+            "AND, MOST IMPORTANTLY: your previous attempt at this exact card was REJECTED and is "
+            "being repainted. What was wrong with it: "
+            + "; ".join(corrections)
+            + ". Fix precisely that. Everything else about the brief is unchanged, so do not "
+            "start over from a different idea — paint this card again, correctly."
         )
     return "\n".join(lines)
 

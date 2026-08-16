@@ -585,7 +585,10 @@ class CreativeFullBriefTests(SimpleTestCase):
         for oracle in ("Trample", "Flying\nTrample", "Flying\nTrample\nHaste\nVigilance"):
             with self.subTest(oracle=oracle):
                 brief = prompts.creative_full({**GREEN, "oracle_text": oracle})
-                self.assertIn("ONE broad pale strip across the lower third", brief)
+                # "across the lower third" until 2026-08-16, when that phrase was found to be
+                # capping the strip at the very size the next clause demanded of it. The
+                # invariant this test guards is ONE strip, not where it was said to sit.
+                self.assertIn("ONE broad pale strip low on the card", brief)
                 self.assertNotIn("SEPARATE pale strips", brief)
                 self.assertIn("Paint exactly these 3 raised surfaces", brief)
 
@@ -742,7 +745,11 @@ class CreativeFullBriefTests(SimpleTestCase):
         continuation and forbid the blank, or it gets one of them at random.
         """
         brief = prompts.creative_full(GREEN)
-        self.assertIn("CONTINUES through the lower third", brief)
+        # Re-aimed 2026-08-16 from "through the lower third" to the region around the surfaces.
+        # On a wordy card the broad strip legitimately OCCUPIES the lower third, so the old
+        # phrasing asked the picture to run through the one place a panel was also required to
+        # be. The invariant is calm-is-continuation, not the name of the band.
+        self.assertIn("CONTINUES around and below the raised surfaces", brief)
         self.assertIn("never stops into a blank panel", brief)
         # The wording that produced the dead space must not come back.
         self.assertNotIn("Nothing that matters may sit in the lower third", brief)
@@ -863,6 +870,35 @@ class StripHeightTests(SimpleTestCase):
         # rules text goes". A height clause that says "or their combined height" contradicts it,
         # and a brief that asks for two incompatible things gets one of them at random.
         self.assertNotIn("COMBINED", brief)
+
+    def test_the_brief_never_confines_the_strip_to_a_region_smaller_than_the_strip(self):
+        """MEASURED 2026-08-16 (bd mtg-8h9). The brief asked for a strip "across the lower third"
+        and, in the very next breath, for a flat face of AT LEAST 33% — the lower third exactly.
+        Three other clauses pushed the other way, so the model shrank it: Ulamog asked 33% and
+        painted 19%, and across 40 stored detections the painted height did not track the text at
+        all (Lightning Bolt, 44 characters, ranged 0.107 to 0.298).
+
+        "The lower third" is the trap specifically, because it reads as a size and not a place.
+        """
+        for face in (self.WORDY, self.TERSE):
+            brief = prompts.creative_full(face)
+            self.assertNotIn(
+                "across the lower third", brief,
+                "a strip asked to be at least a third of the card cannot also be confined to it",
+            )
+            self.assertNotIn("never half the card", brief)
+            # And the picture may not be asked to run through the band the strip now occupies.
+            self.assertNotIn("CONTINUES through the lower third", brief)
+
+    def test_the_strip_is_placed_by_coordinate_and_the_two_agree(self):
+        """Top and foot are stated, and the gap between them IS the height asked for — so the
+        placement and the size cannot drift apart the way the position and the cap did."""
+        room = prompts._strip_height(self.WORDY)
+        brief = prompts.creative_full(self.WORDY)
+        top = (prompts.STRIP_FOOT - room[0]) * 100
+        self.assertIn(f"{top:.0f}% of the way down", brief)
+        self.assertIn(f"{prompts.STRIP_FOOT * 100:.0f}% of the way down", brief)
+        self.assertIn(room[1], brief)
 
     def test_a_card_with_no_rules_text_is_not_told_to_paint_a_strip_of_none(self):
         """Vanilla creatures exist, and an f-string with a None in it is a brief that reads as
@@ -1017,3 +1053,31 @@ class LateClauseOrderTests(SimpleTestCase):
         ban = brief.index("ABSOLUTE REQUIREMENT")
         for clause in ("AND: THE OVERLAP", "AND: THE TOP PLATE", "AND: no purple"):
             self.assertLess(brief.index(clause), ban, f"{clause} sits after the lettering ban")
+
+
+class RepaintCorrectionTests(SimpleTestCase):
+    """A repaint is told what was wrong with the last one (bd mtg-x6v).
+
+    MEASURED 2026-08-16, job 50bc4beb: a mono-black Phyrexian Obliterator under the `fire` palette
+    read 100% red, was repainted against the IDENTICAL brief, and came back 48% red. Two paid
+    calls, no card. The brief never mentioned the first failure because it had no way to.
+    """
+
+    def test_a_first_attempt_carries_no_correction_block(self):
+        self.assertNotIn("was REJECTED", prompts.creative_full(GREEN))
+
+    def test_the_graders_own_sentence_reaches_the_repaint(self):
+        detail = "the card reads red (100% of its colour) but its identity is B"
+        brief = prompts.creative_full(GREEN, corrections=[detail])
+        self.assertIn("was REJECTED", brief)
+        self.assertIn(detail, brief)
+
+    def test_the_correction_never_outranks_the_lettering_ban(self):
+        """The ban's last position is measured and this clause must not displace it — the same
+        trap `before_the_writing_ban` exists to stop."""
+        brief = prompts.creative_full(GREEN, corrections=["something was wrong"])
+        self.assertLess(
+            brief.index("was REJECTED"),
+            brief.index("ABSOLUTE REQUIREMENT"),
+            "a correction must not be the final word; painted lettering ruins the card outright",
+        )
