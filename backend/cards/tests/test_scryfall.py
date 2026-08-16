@@ -251,6 +251,20 @@ class ResolveDecklistTest(TestCase):
         self.assertEqual(plan["unsupported"], [{"name": "Academy at Tolaria West", "layout": "planar"}])
         self.assertEqual(len(plan["entries"]), 1)
 
+    def test_a_battle_is_rejected_rather_than_composited_without_its_defense(self):
+        """bd mtg-l8j. Scryfall gives a Battle layout `transform`, so the two-sided machinery
+        takes it and it composites looking finished with no defense number on it — AFTER the paid
+        call. CLAUDE.md: an unresolvable layout must fail loudly, never render a dropped value.
+        Rejected on the type line because the layout does not distinguish it from a werewolf.
+        """
+        plan = self._resolve("1 Huntmaster of the Fells\n1 Invasion of Alara\n")
+        self.assertEqual(
+            plan["unsupported"],
+            [{"name": "Invasion of Alara", "layout": "battle"}],
+            "reported as 'battle', not 'transform' — the layout is not why it was rejected",
+        )
+        self.assertEqual([e["card"].layout for e in plan["entries"]], ["transform"])
+
     def test_saga_is_supported(self):
         plan = self._resolve("1 History of Benalia")
         self.assertEqual(len(plan["entries"]), 1)

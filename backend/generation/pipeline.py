@@ -57,8 +57,9 @@ def faces_of(name):
     if missing:
         raise Rejected("unknown", f"Scryfall does not know {missing[0]!r}")
     card = found[name]
-    if card.layout in scryfall.UNSUPPORTED:
-        raise Rejected("unsupported", f"{card.name}: layout {card.layout} is not supported")
+    refused = scryfall.rejection(card)
+    if refused:
+        raise Rejected("unsupported", f"{card.name}: layout {refused} is not supported")
     return scryfall.faces(card)
 
 

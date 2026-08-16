@@ -43,6 +43,23 @@ ordinary single-faced card, which is what it is.
 UNSUPPORTED = {"planar", "scheme", "vanguard", "art_series", "emblem", "augment", "host"}
 """Not deck cards (BUILD-SPEC §9). Rejected before generation, so they cost nothing."""
 
+def rejection(card):
+    """Why this card cannot be generated yet, as the name to report it under, or None.
+
+    A Battle is not in `UNSUPPORTED` and never could be: Scryfall gives it layout `transform`,
+    the same as a werewolf, so `TWO_SIDED` picks it up and it composites looking finished with
+    its defense number missing entirely — after the paid call (bd mtg-l8j). `_face` does not read
+    Scryfall's `defense`, and `compositor.REGIONS` has nowhere to draw it. CLAUDE.md is explicit
+    that an unrenderable layout must fail loudly rather than drop a printed value, so it is
+    refused here, where it costs nothing, until the defense box exists.
+    """
+    if card.layout in UNSUPPORTED:
+        return card.layout
+    if "battle" in (card.data.get("type_line") or "").lower():
+        return "battle"
+    return None
+
+
 SECTIONS = {"deck", "sideboard", "commander", "companion", "maybeboard", "tokens"}
 
 UB = "universesbeyond"
@@ -309,8 +326,9 @@ def resolve_decklist(text):
         card = found.get(name)
         if card is None:
             continue
-        if card.layout in UNSUPPORTED:
-            unsupported.append({"name": name, "layout": card.layout})
+        refused = rejection(card)
+        if refused:
+            unsupported.append({"name": name, "layout": refused})
             continue
         entries.append({"quantity": quantity, "card": card, "faces": faces(card)})
 
