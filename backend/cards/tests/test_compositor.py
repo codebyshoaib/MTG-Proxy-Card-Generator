@@ -240,6 +240,25 @@ class PrintableFaceTests(SimpleTestCase):
         self.assertGreaterEqual(face[0], 80, f"the rod was not peeled on a dark plate: {face}")
         self.assertLessEqual(face[2], 720)
 
+    def test_scene_crossing_the_panel_gives_the_box_back_rather_than_a_third_of_it(self):
+        """MEASURED 2026-08-16, job fc17efcb. THE OVERLAP clause asks the model to run part of the
+        scene in FRONT of the raised surfaces, and it did: smoke and a branch crossed the left of
+        a rules parchment. The scan read 414 of its 447-column limit as rim, so the text was set
+        into the right two-thirds of a large empty panel — SOUND by every gate, and exactly the
+        "layers pasted together" look the client reported.
+
+        A crossing is not a rim. Over every stored blank with a detection beside it, real rims
+        measure 0.006 to 0.181 of the panel and the two runaways measure 0.257 and 0.292, so the
+        cap sits between them and a runaway now returns the box untouched.
+        """
+        image = self.surface()
+        crossing = ImageDraw.Draw(image)
+        # A plume over the left THIRD — wider than any rod, which is the whole distinction.
+        for y in range(0, 300, 4):
+            crossing.line([(0, y), (260, y + 30)], fill=(70, 62, 78, 255), width=7)
+        face = compositor.printable_face(image, (0, 0, 800, 300))
+        self.assertEqual(face[0], 0, f"a third of the panel was given away to a crossing: {face}")
+
     def test_the_peel_is_capped_so_a_misread_cannot_eat_the_surface(self):
         """A box wrong enough to look like ornament all the way across is better printed on and
         reported by `check` than silently shrunk to nothing."""

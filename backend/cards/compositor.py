@@ -237,10 +237,29 @@ FACE_RATIO = 3.0
 # A floor, so a perfectly flat synthetic surface (baseline ~0) does not treat its own noise as
 # ornament and peel itself away.
 FACE_FLOOR = 6.0
-# Peeling is capped so a misread can never eat the surface. A rim wide enough to take a third of
-# the box is not a rim, and a box that wrong is better printed on and reported by `check` than
-# silently shrunk to nothing.
-FACE_MAX_PEEL = 0.30
+# Peeling is capped so a misread can never eat the surface. A rim this wide is not a rim, and a
+# box that wrong is better printed on and reported by `check` than silently shrunk to nothing.
+#
+# LOWERED FROM 0.30, 2026-08-16. At 0.30 the pathology this cap exists to stop was slipping under
+# it. A Phyrexian Obliterator came back with a smoke plume and a branch crossing the left of its
+# rules parchment — which is THE OVERLAP the brief explicitly asks for — and the scan read 414 of
+# its 447-column limit as rim. The card graded SOUND and shipped with its text jammed into the
+# right two-thirds of a large empty parchment: no gate fires, and it is exactly the "layers pasted
+# together" look the client reported.
+#
+# Measured over every stored blank that has a detection beside it (n=8, and biased — blanks are
+# only kept on cards that graded unsound, so this is the hard end of the population):
+#
+#     plausible rims     0.006  0.007  0.036  0.037  0.058  0.075  0.084  0.103  0.106  0.154  0.181
+#     scan ran away      0.257  0.292   (one Elesh Norn, 0.549 of its panel width between them)
+#
+# 0.20 sits in that gap. It keeps every rim the scan has ever found legitimately and rejects both
+# runaways, and the Obliterator's 0.277 now returns the box untouched.
+#
+# REVISE THIS if a card turns up whose real rod or torn end is genuinely a fifth of the panel — the
+# sample above is small and one-sided. The symptom would be text starting ON the rim again, which
+# is the fault `printable_face` was written for in the first place.
+FACE_MAX_PEEL = 0.20
 
 
 def printable_face(image, box, ratio=FACE_RATIO):
