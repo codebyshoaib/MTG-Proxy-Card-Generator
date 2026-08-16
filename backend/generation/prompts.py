@@ -626,6 +626,69 @@ REFERENCE = (
     "disagree, the art style wins."
 )
 
+# CLIENT 2026-08-16, on Craterhoof: "the same animal in the same pose as the original, it must be
+# different ... if it helps the ai can read the card typing on the creature to get an idea of what
+# the creature should look like, that and the name of the card, as well as potentially referencing
+# the original card to a degree."
+#
+# The first half of his suggestion is already what we do — the name and the type line are in every
+# brief — and the second half is already what REFERENCE above asks for, in these words: "invent a
+# NEW moment for them, with a different pose, a different action, a different angle". It lost.
+#
+# That makes it the fourth clause on this project to be correctly worded and ignored, and the
+# lesson from the other three is that a NEGATIVE does not survive: the P/T shield took three
+# rewordings and was only fixed by looking closer (e10ba96), the title order took a late positive
+# restatement (mtg-39a), and the overlap took being made compulsory with a count.
+#
+# So this stops asking the model not to copy a staging and hands it one instead. A model given a
+# camera and a moment to paint cannot fall back on the reference's, because it already has one.
+#
+# Camera and moment are separate lists multiplied together rather than one list of finished
+# sentences: 8 x 7 is 56 stagings out of 15 phrases, and any card that lands on a bad pairing is
+# one edit away rather than one more sentence.
+#
+# Both are deliberately SUBJECT-AGNOSTIC. "Charging at the viewer" reads as a direction to a beast
+# and as nonsense to Sol Ring, and Creative Full briefs artifacts and instants through this same
+# path. An angle and a beat apply to anything that can be drawn.
+STAGING_CAMERA = (
+    "from low down, looking up at it",
+    "from slightly above, looking down",
+    "at eye level and close, filling the frame",
+    "from behind and to one side, as it turns back",
+    "in three-quarter view from its left",
+    "in three-quarter view from its right",
+    "head-on and square to the viewer",
+    "from far enough back that the place around it reads too",
+)
+STAGING_MOMENT = (
+    "mid-movement and off-balance, not posed",
+    "in the instant before it acts",
+    "in the instant just after, everything still settling",
+    "still and alert, watching something outside the frame",
+    "turning sharply toward something off to one side",
+    "at the top of its movement, held for a beat",
+    "braced and bearing weight",
+)
+
+
+def _staging(face):
+    """One camera and one moment, fixed by the card's own name.
+
+    Deterministic on purpose. A random staging would make the same card different on every run,
+    which breaks the one thing this project relies on to tell a fix from noise — rerunning the
+    same card over the same settings and comparing. `hash()` is salted per process and cannot be
+    used; the name's own bytes can.
+    """
+    seed = sum(face["name"].encode())
+    camera = STAGING_CAMERA[seed % len(STAGING_CAMERA)]
+    moment = STAGING_MOMENT[(seed // len(STAGING_CAMERA)) % len(STAGING_MOMENT)]
+    return (
+        f"STAGE IT THIS WAY, and this is not a suggestion: show the subject {camera}, {moment}. "
+        "That is the picture to paint. It is deliberately NOT the staging of the attached "
+        "reference, and where the two disagree this one wins."
+    )
+
+
 # Named individually because the model treats them as separate things: it will happily
 # obey "no text" and still paint an empty title banner. Every item here is one that a
 # generation actually produced (handover §7, bd mtg-z12, mtg-gni).
@@ -828,7 +891,7 @@ def creative_full(
     lines += ["", _palette(face.get("color_identity") or [], strict=True)]
 
     if reference:
-        lines += ["", REFERENCE]
+        lines += ["", REFERENCE, _staging(face)]
     if style:
         lines += [
             "",
@@ -876,8 +939,11 @@ def creative_full(
     band = (
         "ONE broad pale strip across the lower third, "
         + (
-            f"AT LEAST {room[1]} of the card's height. This card's rules text needs exactly that "
-            "much room to be read across a table, and a shorter strip makes the card unusable"
+            f"whose FLAT PALE FACE is AT LEAST {room[1]} of the card's height — that is the "
+            "clear even area alone, measured inside its rim and NOT counting the curled rods, "
+            "carved ends, torn edges or anything crossing it. This card's rules text needs "
+            "exactly that much clear room to be read across a table, and a shorter face makes "
+            "the card unusable, so if the ends are ornate make the whole piece bigger"
             if room
             else "tall enough to hold every line of text comfortably with a margin"
         )
@@ -905,8 +971,42 @@ def creative_full(
     else:
         surfaces.append(band)
     if face.get("power") is not None:
+        # MEASURED 2026-08-16 across 18 full-res CREATURE cards from their gallery
+        # (Project Material/evidence-reference-frames-2026-08-16/): rounded rectangle or tab 11,
+        # disc 2, bare-on-the-art or an irregular blob 3, SHIELD 2. Shield is 11% of the reference
+        # and was 100% of ours, because this line named it and naming a shape pins it — the same
+        # mechanism the comment above records for "banner" and "plaque".
+        #
+        # The shield is also the worst shape for our own pipeline, which is why it is not merely a
+        # taste fix: it is a pointed rim around a small recessed face (bd mtg-1uv, "a fixed box
+        # cannot track a painted one") and the smallest surface on the card at 0.067 of the width,
+        # which is what held detection at 35%. A rounded tab has a straight rim and a far larger
+        # printable face inside the same bounding box.
+        #
+        # So the shape is opened up and the FACE is what gets pinned instead — flat, even, and big
+        # enough for the two characters we print onto it. Still a shape and never a field: "plaque
+        # for power/toughness" came back carrying a literal "P/T" (2026-08-10).
+        # CLIENT 2026-08-16: "the P/T box always comes as a shield, it shall come as per the art
+        # not always shield. And that too blank without any symbol in it — Craterhoof has a spiral
+        # in it."
+        #
+        # Two asks. The SHAPE is led by the material rather than left open, because "whichever
+        # suits the picture" still came back a shield on 1 of 3 — the model's prior for this field
+        # is strong and an open choice does not displace it, the same way an open choice did not
+        # displace the reference's staging. Concrete alternatives are given instead, tied to what
+        # the scene is made of, so there is something specific to paint.
+        #
+        # The FACE is stated positively as bare material. "No spiral" is already in the set-symbol
+        # ban, and bd mtg-z12's finding is that naming a thing summons it, so this says what the
+        # face IS rather than adding a fourth mention of what it must not carry.
         surfaces.append(
-            "a small shield-shaped boss overlapping the bottom-right corner of the lowest strip"
+            "a small raised tab overlapping the bottom-right corner of the lowest strip. Its "
+            "shape comes from what this scene is made of, not from a template — a broken slab "
+            "where the scene is stone, a river pebble by water, a torn tag or a hanging seal "
+            "where there is cloth, a beaten plate among metal, a knot of wood in a forest, a "
+            "disc, a rounded tab. Its face is flat, even, BARE MATERIAL and wide enough to hold "
+            "two characters side by side — the value goes on it afterwards, so it is left as "
+            "plain stone, plain wood, plain metal with nothing cut or carved into it"
         )
     total = len(surfaces)
     if borderless:
@@ -965,10 +1065,13 @@ def creative_full(
             "stone, a plate of beaten metal, a length of bone, a curl of bark, a scroll with a "
             "rod at each end. It has thickness, it catches the light along one edge, and it casts "
             "its own shadow onto whatever is behind it.",
-            "The artwork runs behind each surface and past it on both sides, and at one or two "
-            "points something from the scene — a claw, a limb, a wingtip, a curl of smoke, a vine "
-            "— crosses in FRONT of one. That overlap is what makes the finished card read as ONE "
-            "piece of art rather than as a picture with labels laid on it.",
+            "The artwork runs behind each surface and past it on both sides.",
+            # Every surface on their Craterhoof ends in a carved boss; ours end square, which is
+            # what a rectangle laid on a painting looks like. Cheap to ask for and it is the half
+            # of the overlap problem that does not depend on the model risking the text area.
+            "No surface ends in a square cut. Each one's two ends are finished as part of the "
+            "scene — a rod, a carved boss, a knot of vine, a rivet, a torn or frayed edge, a "
+            "curled corner — so it looks made rather than cropped.",
             # The client's fourth ask — "creative as to where to place the text" — is only this
             # much freedom, and no more. `cards.compositor` lays out axis-aligned lines and
             # `generation.check` asserts the vertical order, so a diagonal ribbon or a title
@@ -979,6 +1082,23 @@ def creative_full(
             "wide or as narrow as the composition wants, sitting where it belongs in the picture, "
             "as long as the ORDER down the card is kept and each surface's long top and bottom "
             "edges stay straight and level.",
+            # ALL FOUR EDGES, not just the long two. MEASURED 2026-08-16: Swords to Plowshares came
+            # back with a torn slab whose right edge sloped inward going down, and the rules text
+            # ran off it onto the art. Nothing downstream can catch that — `panels.detect` answers
+            # with an axis-aligned rectangle, `compositor` prints into one, and `printable_face`
+            # could not find the true edge either, because the art beside that slab was white robe
+            # on snow: the same value as the parchment and just as smooth, so there is no boundary
+            # to measure.
+            #
+            # So the shape is constrained instead of the measurement being made cleverer. The
+            # ornament that makes a surface look hand-made moves OUTSIDE the flat face rather than
+            # eating into it, which is also what the reference site's own slabs do — carved bosses
+            # and curled rods at the ends of a straight-sided panel.
+            "The flat part of each surface is a straight-sided rectangle — its left and right "
+            "edges run straight up and down, the same way its top and bottom run straight across. "
+            "Torn corners, curled rods, carved ends and chipped stone all sit OUTSIDE that "
+            "rectangle, added around it. A surface that narrows as it goes down loses the text "
+            "printed on it.",
             f"Paint exactly these {total} raised surfaces and no others: "
             + "; ".join(surfaces)
             + ".",
@@ -1223,6 +1343,60 @@ def creative_full(
             sentence,
         )
 
+    # CLIENT 2026-08-15, sending a card whose vines cross its own title arch: "you see how this
+    # card feels like 1 piece of art ... the examples you showed me ... dont have an abstract text
+    # box design."
+    #
+    # This brief already asked for it, inside the surfaces paragraph: "at one or two points
+    # something from the scene ... crosses in FRONT of one". MEASURED 2026-08-16 on the two cards
+    # the client was sent — ZERO overlaps on either, against vines over the title plate and roots
+    # over the rules panel on the reference site's own Craterhoof of the same card
+    # (Project Material/evidence-reference-frames-2026-08-16/).
+    #
+    # So this is the same lesson the top-plate clause above records, for the third time: a soft
+    # sentence ("one or two", "something") in the middle of a long paragraph does not survive. It
+    # is compulsory now, it names a count, and it is repeated late and alone.
+    #
+    # Only in the borderless branch. The framed branch has the edge material anchoring the plates,
+    # which is what this clause substitutes for, and it has not drawn the complaint.
+    if borderless:
+        before_the_writing_ban(
+            "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
+            "picture with labels laid on it. At least TWO of the raised surfaces have a real "
+            "element of the scene crossing in FRONT of them — a vine, a creeping root, a claw, a "
+            "limb, a wingtip, a tail, a curl of smoke, a lick of flame, a hanging chain. Not a "
+            "shadow and not a glow: a solid thing, drawn in the same ink and lit by the same light "
+            "as the rest of the picture, passing over the surface and continuing out the other "
+            # The hard boundary. `cards.compositor` prints into each surface's interior, so an
+            # element crossing the middle of the pale strip lands under our own rules text and
+            # `check.contrast` fails the card into a repaint — trading the client's complaint for
+            # a legibility one. Overlapping the rim is free; overlapping the face costs a credit.
+            # Stated as geometry rather than as a ban, because bd mtg-z12's finding is that naming
+            # a thing summons it.
+            "side. Each crossing stays at that surface's OUTER EDGE or over one of its corners: "
+            "the broad flat middle of every surface stays completely clear and unbroken, because "
+            "that is where the card's text is printed. "
+            # MEASURED 2026-08-16, first batch under this clause: Craterhoof's vine crossed a
+            # quarter of the way along the top plate. `panels.detect` is asked to keep what
+            # crosses in front OUT of the box, did so correctly, and the box that came back
+            # started at x=0.27 — so the name was laid out from there and sat visibly off-centre
+            # on a plate that runs nearly the full width. The clause worked and the card looked
+            # wrong, which is the cheapest kind of bug to catch and the easiest to leave in.
+            #
+            # The top plate is the one surface where this costs something, because it is the only
+            # one whose text is left-aligned rather than centred, and it is the sliver a fanned
+            # hand shows. So its crossing is pushed out to the very end.
+            "On the plate across the top, keep any crossing within a sixth of one end or the "
+            "other. The long middle of that plate carries the card's name and must be clear "
+            "right across it."
+        )
+
+    # INSERTED BEFORE THE TOP-PLATE CLAUSE, and the order is load-bearing. These insert in call
+    # order, so whatever is added last sits closest to the lettering ban at the end. MEASURED
+    # 2026-08-16: with the overlap clause added AFTER the top plate's, 3 of 6 cards in one batch
+    # failed on the top plate — twice with no title surface painted at all, once with the plate
+    # at y=0.58 — against 0 of 3 before it. Pushing that restatement one clause further from the
+    # end was enough to break it, which is the third time this file has measured the same thing.
     # MEASURED 2026-08-15, bd mtg-8h9 — the first diagnosis made possible by keeping the blank
     # (bd mtg-57t). Elesh Norn came back with all four surfaces painted in the right ORDER and all
     # four crammed into the bottom 45% of the card: the name plate landed at y=0.556 and
@@ -1299,7 +1473,7 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
     lines += ["", _palette(face.get("color_identity") or [])]
 
     if reference:
-        lines += ["", REFERENCE]
+        lines += ["", REFERENCE, _staging(face)]
     if style:
         lines += [
             "",

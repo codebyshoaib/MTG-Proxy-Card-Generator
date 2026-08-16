@@ -241,6 +241,46 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("the art style wins", brief)
         self.assertIn("not its setting", brief)
 
+    def test_the_card_is_handed_a_staging_instead_of_being_told_not_to_copy_one(self):
+        """CLIENT 2026-08-16: Craterhoof came back "the same animal in the same pose as the
+        original". REFERENCE already says "invent a NEW moment for them, with a different pose, a
+        different action, a different angle" and it lost — the fourth correctly-worded clause on
+        this project to be ignored.
+
+        The other three were only fixed by changing the KIND of instruction, never by rewording:
+        the P/T shield by looking closer, the title order by a late positive restatement, the
+        overlap by being made compulsory with a count. So the model is given a camera and a moment
+        to paint rather than a staging to avoid."""
+        brief = prompts.art_only(GREEN)
+        self.assertIn("STAGE IT THIS WAY", brief)
+        self.assertIn("NOT the staging of the attached reference", brief)
+        # It has to arrive after the reference it overrides, or it is arguing with something the
+        # model has not read yet.
+        self.assertLess(brief.index("official artwork"), brief.index("STAGE IT THIS WAY"))
+
+    def test_the_staging_is_fixed_by_the_card_so_a_rerun_is_comparable(self):
+        """A random staging would make the same card differ on every run, which breaks the one
+        method this project uses to tell a fix from noise: rerun the same card over the same
+        settings and compare. `hash()` is salted per process, so the name's own bytes are used."""
+        self.assertEqual(prompts._staging(GREEN), prompts._staging(GREEN))
+        self.assertEqual(prompts._staging({**GREEN}), prompts._staging(GREEN))
+
+    def test_different_cards_get_different_stagings(self):
+        """One staging for every card would be a house style, not a fix — it would put the whole
+        set in the same pose instead of the reference's."""
+        names = ("Craterhoof Behemoth", "Raphael, Tough Turtle", "Tower Winder", "Sol Ring",
+                 "Lightning Bolt", "Counterspell", "Elesh Norn", "Swords to Plowshares")
+        stagings = {prompts._staging({**GREEN, "name": n}) for n in names}
+        self.assertGreater(len(stagings), len(names) // 2, f"stagings collapse: {stagings}")
+
+    def test_no_staging_names_an_action_only_a_creature_could_do(self):
+        """Creative Full briefs artifacts and instants through this same path. "Charging at the
+        viewer" is a direction to a beast and nonsense to Sol Ring, so the vocabulary is angles and
+        beats, which apply to anything that can be drawn."""
+        for phrase in prompts.STAGING_CAMERA + prompts.STAGING_MOMENT:
+            for creature_only in ("charg", "roar", "attack", "leap", "claw", "wing", "snarl"):
+                self.assertNotIn(creature_only, phrase.lower(), f"{phrase!r} assumes a creature")
+
     def test_the_reference_gives_the_character_and_not_the_composition(self):
         """CLIENT 2026-08-13: "it is a little too similar to the original art on one of them, we
         usually dont want them to come out looking like the original card, just elements to be
@@ -269,6 +309,48 @@ class CreativeFullBriefTests(SimpleTestCase):
         ~20 of the reference site's own 24 gallery cards do it and the client accepted it too."""
         self.assertIn("THE CARD IS FULL BLEED", prompts.creative_full(GREEN))
         self.assertIn("THE CARD'S EDGE", prompts.creative_full(GREEN, borderless=False))
+
+    def test_the_overlap_is_compulsory_and_is_the_last_thing_the_brief_says(self):
+        """CLIENT 2026-08-15, sending a card whose vines cross its own title arch: "you see how
+        this card feels like 1 piece of art ... the examples you showed me ... dont have an
+        abstract text box design."
+
+        The brief already asked for this — "at one or two points something from the scene ...
+        crosses in FRONT of one" — and MEASURED 2026-08-16 it produced zero overlaps on our
+        Craterhoof and Raphael, against vines over the title plate and roots over the rules panel
+        on the reference site's own Craterhoof. Soft wording placed ABOVE the surface list did not
+        survive, so this asserts the three things that changed: it is required, it names a count,
+        and it is last (bd mtg-39a — a restatement at the end is what fixed title order)."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("AND: THE OVERLAP", brief)
+        self.assertIn("At least TWO of the raised surfaces", brief)
+        # The soft version must be gone, not merely outvoted by the new one.
+        self.assertNotIn("at one or two points", brief)
+        # Late and alone, like the top-plate clause: after the surfaces paragraph it lost inside,
+        # and before the lettering ban, whose last place is measured.
+        lines = brief.split("\n")
+        overlap = next(i for i, l in enumerate(lines) if l.startswith("AND: THE OVERLAP"))
+        surfaces = next(i for i, l in enumerate(lines) if l.startswith("Paint exactly these"))
+        ban = next(i for i, l in enumerate(lines) if l.startswith("ABSOLUTE REQUIREMENT"))
+        self.assertLess(surfaces, overlap)
+        self.assertLess(overlap, ban)
+        # Framed cards have the edge material doing this job and have not drawn the complaint.
+        self.assertNotIn("AND: THE OVERLAP", prompts.creative_full(GREEN, borderless=False))
+
+    def test_the_overlap_is_kept_off_the_face_the_compositor_prints_into(self):
+        """The overlap is free at a surface's rim and expensive across its middle: `compositor`
+        prints the rules text into the interior, so an element painted over it lands under our own
+        lettering and `check.contrast` fails the card into a repaint. Asking for the overlap
+        without bounding it trades the client's complaint for a legibility one."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("OUTER EDGE or over one of its corners", brief)
+        self.assertIn("broad flat middle of every surface stays completely clear", brief)
+
+    def test_surfaces_do_not_end_in_a_square_cut(self):
+        """Every surface on the reference site's Craterhoof ends in a carved boss; ours end square,
+        which is most of what "laid on" looks like at a glance. Cheap, and unlike the overlap it
+        risks nothing near the printable face."""
+        self.assertIn("No surface ends in a square cut", prompts.creative_full(GREEN))
 
     def test_full_bleed_is_asked_for_positively_before_it_is_banned(self):
         """bd mtg-z12's finding cuts both ways: naming an object summons it, and "no border" is a
@@ -301,7 +383,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         brief = prompts.creative_full(GREEN)
         self.assertIn("OBJECT IN THE SCENE", brief)
         self.assertIn("casts its own shadow", brief)
-        self.assertIn("crosses in FRONT of one", brief)
+        self.assertIn("crossing in FRONT of them", brief)
         self.assertIn("ONE piece of art", brief)
 
     def test_borderless_frees_placement_but_not_the_order_or_the_baseline(self):
@@ -578,9 +660,38 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertNotIn("lower third", brief)
         self.assertIn("fills the entire frame, edge to edge", brief)
 
-    def test_a_pt_plaque_is_only_asked_for_when_the_card_has_one(self):
-        self.assertNotIn("shield-shaped boss", prompts.creative_full(GREEN))
-        self.assertIn("shield-shaped boss", prompts.creative_full({**GREEN, "power": "5"}))
+    def test_a_pt_tab_is_only_asked_for_when_the_card_has_one(self):
+        self.assertNotIn("a small raised tab", prompts.creative_full(GREEN))
+        self.assertIn("a small raised tab", prompts.creative_full({**GREEN, "power": "5"}))
+
+    def test_the_pt_tab_shape_is_left_open_because_naming_one_pinned_it(self):
+        """MEASURED 2026-08-16 across 18 full-res CREATURE cards from their gallery: rounded
+        rectangle or tab 11, disc 2, bare-on-the-art or irregular 3, SHIELD 2. Shield is 11% of the
+        reference and was 100% of ours, because the brief said "shield-shaped boss" and naming a
+        shape pins it — the same mechanism `test_surfaces_are_described_as_shapes_not_as_fields`
+        guards for "banner" and "plaque".
+
+        It is a correctness fix and not a taste one. The shield is a pointed rim around a small
+        recessed face — bd mtg-1uv, "a fixed box cannot track a painted one" — and the smallest
+        surface on the card at 0.067 of the width, which is what held detection at 35%. So what
+        gets pinned now is the FACE, which is what we print on, not the outline."""
+        brief = prompts.creative_full({**GREEN, "power": "5"})
+        self.assertNotIn("shield-shaped", brief)
+        # CLIENT 2026-08-16: "it shall come as per the art, not always shield." Leaving the choice
+        # open was not enough — 1 of 3 staged Craterhoofs still came back a shield — so the shape
+        # is led by the scene's material with concrete alternatives to paint.
+        self.assertIn("Its shape comes from what this scene is made of", brief)
+        for shape in ("a broken slab", "a river pebble", "a torn tag", "a beaten plate"):
+            self.assertIn(shape, brief)
+
+    def test_the_pt_tab_face_is_asked_for_as_bare_material(self):
+        """CLIENT 2026-08-16: "and that too blank without any symbol in it, craterhoof has spiral
+        in it" — the model carved a spiral into the tab and the 5/5 printed over it. Stated as what
+        the face IS, not as a fourth ban: bd mtg-z12's finding is that naming a thing summons it,
+        and "spiral" is already named once in the set-symbol clause."""
+        brief = prompts.creative_full({**GREEN, "power": "5"})
+        self.assertIn("BARE MATERIAL", brief)
+        self.assertIn("nothing cut or carved into it", brief)
 
 
     def test_the_art_is_told_it_outranks_the_furniture(self):
@@ -783,3 +894,28 @@ class TopPlatePlacementTests(SimpleTestCase):
         purple = next(i for i, l in enumerate(lines) if l.startswith("AND: no purple"))
         ban = next(i for i, l in enumerate(lines) if l.startswith("ABSOLUTE REQUIREMENT"))
         self.assertEqual(ban - purple, 1, "something was inserted between purple and the ban")
+
+
+class LateClauseOrderTests(SimpleTestCase):
+    """The clauses restated at the end are ordered, and the order is measured, not stylistic.
+
+    `before_the_writing_ban` inserts in call order, so whatever is added last sits closest to the
+    lettering ban that ends the brief. MEASURED 2026-08-16: with the overlap clause added AFTER the
+    top plate's, 3 of 6 cards in one batch failed on the top plate — twice with no title surface
+    painted at all, once with the plate at y=0.58 — against 0 of 3 before it. One clause of extra
+    distance from the end was enough to break it.
+    """
+
+    CREATURE = {**GREEN, "power": "5", "toughness": "5"}
+
+    def test_the_top_plate_restatement_stays_nearer_the_end_than_the_overlap(self):
+        brief = prompts.creative_full(self.CREATURE)
+        self.assertLess(brief.index("AND: THE OVERLAP"), brief.index("AND: THE TOP PLATE"))
+
+    def test_every_late_clause_still_lands_before_the_lettering_ban(self):
+        """That ban's last place is itself measured — it had to move to the very end before it
+        held on 3 of 3 — so nothing may be appended after it."""
+        brief = prompts.creative_full(self.CREATURE)
+        ban = brief.index("ABSOLUTE REQUIREMENT")
+        for clause in ("AND: THE OVERLAP", "AND: THE TOP PLATE", "AND: no purple"):
+            self.assertLess(brief.index(clause), ban, f"{clause} sits after the lettering ban")
