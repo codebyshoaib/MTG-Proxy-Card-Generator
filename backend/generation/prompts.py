@@ -777,6 +777,38 @@ def _palette(color_identity, strict=False):
             "purple: each of those five reads as a mana colour this card does not have, on the "
             "edge material and the raised surfaces as much as in the scene."
         )
+    # MEASURED 2026-08-16: mono-black is the only identity that has never passed
+    # `check.colour_identity`. Obliterator came back red 79% under the `pastel` palette and red
+    # 100% under `oil_painting`, a plain style with nothing fighting it — four failures, two
+    # styles, no passes. The paragraph below is the cause rather than a wording weakness: it
+    # assigns the identity to emissive light, and black has no emissive colour. Read back to a
+    # black card it says "the black must read as the brightest thing ... which is what makes it
+    # read hot", so the model paints the only hot thing it can and the card comes back orange.
+    #
+    # Black is therefore given the two routes it actually has, which are the two routes
+    # `check.colour_identity` accepts: make no colour claim at all (saturated share under
+    # NEUTRAL_SHARE, how white and colourless pass), or let its own hue dominate — and the hue
+    # `check` reads back as black is purple. Warm light is banned by name because warm light is
+    # the measured failure, not a hypothetical one.
+    #
+    # Mono-black only. B/R and B/G have a partner colour that does own an emissive, so the clause
+    # below has something to assign there and has not been measured failing.
+    if set(color_identity) == {"B"}:
+        return (
+            "This card's colour identity is BLACK. Black is the one colour with no light of its "
+            "own — there is no black glow — so do not invent one and do not let the style's own "
+            "warmth stand in for it. Black is carried by DARKNESS and by MATERIAL: a low-key "
+            "scene where deep shadow holds most of the frame, and oil, ichor, tarnished iron, "
+            "ash, bone, wet stone and rot doing the work that colour does on other cards. "
+            "What light there is stays cold — violet, bruised purple, corpse-green or bone-white. "
+            "Purple is right on this card and on no other, because purple reads as black mana. "
+            "NO WARM LIGHT: no fire, no lava, no embers, no orange, no red glow, no gold. Warm "
+            "light reads as red mana, and a black card lit warm misstates its own cost. "
+            "THE SUBJECT KEEPS ITS OWN COLOUR even when that colour is not the card's: a green "
+            "turtle on a black card stays green, and flesh under the armour stays the colour "
+            "flesh is. The darkness is what falls ON the subject and the world around it, never "
+            "paint applied to the subject itself."
+        )
     names = " and ".join(COLOURS[c] for c in color_identity if c in COLOURS)
     return (
         f"This card's colour identity is {names}. The {names} belongs to the LIGHT — glows, "

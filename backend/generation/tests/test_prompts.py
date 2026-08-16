@@ -174,6 +174,34 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn("a green turtle on a red card stays green", brief)
         self.assertIn("never paint applied to the subject itself", brief)
 
+    def test_black_is_carried_by_darkness_because_it_has_no_light_of_its_own(self):
+        """MEASURED 2026-08-16: mono-black is the only identity that has never passed
+        `check.colour_identity`. Phyrexian Obliterator came back red 79% under the `pastel` palette
+        and red 100% under `oil_painting` — a plain style with nothing fighting it. Four failures,
+        two styles, no passes.
+
+        The cause is structural rather than a wording miss. The paragraph above assigns the
+        identity to emissive light, and black has no emissive colour: there is no black glow, so
+        there is nothing to assign and whatever warmth the style carries wins by default.
+
+        `check.colour_identity` passes a card by exactly two routes — it makes no colour claim
+        (saturated share below NEUTRAL_SHARE, which is how white and colourless pass), or the
+        dominant hue is one of its own, and the hue `check` reads back as black is purple. Black
+        is given both, and warm light is banned by name because warm light is the measured
+        failure."""
+        black = prompts.art_only({**GREEN, "color_identity": ["B"]})
+        self.assertIn("no light of its own", black)
+        self.assertIn("NO WARM LIGHT", black)
+        self.assertNotIn("belongs to the LIGHT", black)
+
+    def test_a_black_card_with_a_partner_colour_keeps_the_emissive_clause(self):
+        """B/R and B/G have a partner colour that does own an emissive, so the generic clause has
+        something to assign and has not been measured failing. Widening the black branch to cover
+        them would be a guess."""
+        both = prompts.art_only({**GREEN, "color_identity": ["B", "R"]})
+        self.assertIn("belongs to the LIGHT", both)
+        self.assertNotIn("NO WARM LIGHT", both)
+
     def test_the_palette_restates_the_identity_instead_of_pointing_back_at_it(self):
         """A back-reference lost to the palette on a real card (bd mtg-5pb).
 
