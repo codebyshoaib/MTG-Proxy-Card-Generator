@@ -30,7 +30,7 @@ STRIP_WIDTH = round(CANVAS[0] * 0.88 * (1 - 2 * compositor.PAD))
 
 # MEDIAN LINE PITCH OF A REAL PRINTED CARD, as a fraction of card height. MEASURED 2026-08-15 over
 # n=40 real 2015-frame cards spanning 13-336 oracle characters (bd mtg-8h9,
-# spikes/measure_rules_size.py). Sizing the strip to this asks for a card that reads like a printed
+# bd mtg-8h9). Sizing the strip to this asks for a card that reads like a printed
 # one, rather than one that merely clears `compositor.RULES_MIN` — the floor is the point below
 # which a card is unusable, not the target.
 REAL_CARD_PITCH = 0.0332

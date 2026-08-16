@@ -82,7 +82,7 @@ PT_CROP = (0.56, 0.56, 1.0, 1.0)
 """The corner of the card the second image is cut from.
 
 Covers every shield in the sample with room to spare: measured across six cards they span
-x 0.727-0.925, y 0.771-0.960 (spikes/measure_pt_shield.py).
+x 0.727-0.925, y 0.771-0.960, measured off the stored blanks.
 """
 
 PT_CROP_SCALE = 2
@@ -235,7 +235,7 @@ def _is_the_pt_tab(mark, tab):
 # same five DETECTIONS — but `pipeline` only calls `infer_pt` when `detected["pt"]` is absent, so
 # the constant was fitted on the one population it never runs on. Re-measured 2026-08-15 over five
 # cards where detection actually missed, by reading the painted surface off a labelled grid
-# (spikes/measure_pt_shield.py):
+# (measured off the stored blanks):
 #
 #   detected, n=5     width 0.143 - 0.156     <- what the old 0.152x0.127 was fitted on
 #   undetected, n=5   width 0.067 - 0.130     <- what it is applied to

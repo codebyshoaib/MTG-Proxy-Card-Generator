@@ -736,7 +736,7 @@ class StripHeightTests(SimpleTestCase):
     """The brief states how tall THIS card's rules strip has to be, instead of wishing for it.
 
     MEASURED 2026-08-15 over n=40 real printed 2015-frame cards (bd mtg-8h9,
-    spikes/measure_rules_size.py): `compositor.RULES_MIN` is right to within 6% of the tightest
+    bd mtg-8h9): `compositor.RULES_MIN` is right to within 6% of the tightest
     real printing, so a card that trips it is genuinely unreadable and the floor must not be moved
     to make cards pass. The defect is upstream — the painted surface is too short — and the model
     could never have known, because we deliberately never show it the text.

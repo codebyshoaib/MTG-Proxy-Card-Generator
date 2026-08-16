@@ -70,7 +70,7 @@ PT_SIZE = 0.62
 # their rules text runs at pitch/cardH 0.031 and ours at that size runs at 0.0304, i.e. their
 # cards would trip the old floor too. The floor has to sit BELOW the look we are matching.
 #
-# VALIDATED 2026-08-15 (bd mtg-8h9, spikes/measure_rules_size.py) against n=40 real printed
+# VALIDATED 2026-08-15 (bd mtg-8h9) against n=40 real printed
 # 2015-frame cards spanning 13-336 oracle characters, measured off Scryfall's own 745x1040 PNGs by
 # pixel projection. The comparable is LINE PITCH as a fraction of card height, not font size: real
 # cards are set in Plantin and we ship PT Serif, whose x-height per em differs, so equal font sizes

@@ -12,3 +12,4 @@ art-out/
 # Scryfall card images a spike downloaded to measure against. 46MB, refetchable, and this repo is
 # handed to the client at Milestone 3.
 cards-cache/
+docs/

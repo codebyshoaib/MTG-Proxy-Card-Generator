@@ -13,7 +13,6 @@ backend/    Django + DRF. Scryfall lookup, prompt building, Gemini calls,
             text compositing and the verify loop all live in one process,
             because verification has to re-read the *composited* card.
 frontend/   Next.js prototype UI.
-spikes/     One-off scripts that produced the measured evidence in BUILD-SPEC.
             Not part of the running system; kept so the numbers stay checkable.
 ```
 

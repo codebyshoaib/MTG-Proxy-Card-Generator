@@ -20,7 +20,8 @@ MEASURED = [
 
 # The population the fallback DOES serve: five stored cards whose `pt` came back None, with the
 # surface the model actually painted read off a labelled 0.02 grid by eye, +-0.005
-# (spikes/measure_pt_shield.py, which re-draws the overlays these came from).
+# (measured 2026-08-13/15 off the stored blanks; the spike that drew the overlays is gone —
+#  the engine composites from a blank directly now, `compose_card --from <blank>.png`).
 #
 # The fourth is a horizontal plaque rather than a shield — the model answered the brief's "small
 # shield-shaped boss" with different furniture — which is one reason nothing was reported in that
