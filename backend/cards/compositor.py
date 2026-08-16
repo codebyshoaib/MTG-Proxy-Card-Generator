@@ -23,11 +23,29 @@ See the note above `_stamp`, and `generation.panels` for the multi-panel finding
 
 import colorsys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 from cards import fonts, symbols, textlayout
 
 PAD = 0.055
+# The rules panel pads tighter than the display plates, because it is the only surface whose
+# padding was doing TWO jobs and now only has one.
+#
+# PAD's own comment records the first: "the plate the detector reports includes the carved rim, so
+# a fraction of it is already conservative". `printable_face` now measures that rim off the box
+# instead of budgeting for it, so on this panel the margin is pure optical breathing room.
+#
+# MEASURED 2026-08-16 on the three staged Craterhoofs and the rod card. The rules panel is the one
+# place the margin is expensive, because `textlayout.fit_across` steps the type size down until
+# the block fits the box HEIGHT — so padding comes straight out of legibility:
+#
+#   PAD        run1 fit 46 (UNSOUND)   run3 51   rod 53
+#   RULES_PAD  run1 fit 48 (passes)    run3 53   rod 56
+#
+# run1 passes at exactly RULES_MIN, which is a pass and not a margin. The durable fix is the brief
+# asking for the flat pale FACE to be tall enough rather than the whole ornamented piece — see
+# bd mtg-8h9, changed the same day and still unverified.
+RULES_PAD = 0.035
 # Display sizes as a fraction of their plate's height. RAISED 2026-08-10: theirs fill their
 # plates and ours sat inside a ring of bare stone, which is the same "smaller and less readable"
 # report as the rules text and the same cause. The plate the detector reports includes the carved
@@ -37,6 +55,8 @@ TYPE_SIZE = 0.66
 # Ceiling as a fraction of CARD height. Their rules text fills its panel; ours sat at half the
 # size and floated in empty stone, because this was 0.030.
 RULES_SIZE = 0.055
+# Power/toughness as a fraction of its tab's height.
+PT_SIZE = 0.62
 # Below this fraction of card height the type is too small to be read across a table, and the
 # real cause is a slab the AI painted too small — Craterhoof came back with visibly smaller text
 # than three other cards in the same batch. Type size varying card to card is worse in a deck
@@ -168,6 +188,179 @@ def _box(panel, size):
     return x0, y0, x1, y1
 
 
+# How much a boundary line may vary ALONG ITS OWN LENGTH before it is treated as rim, ornament or
+# something crossing in front rather than as printable face.
+#
+# MEASURED 2026-08-16 on Craterhoof's scroll, the card whose text printed onto the rod. Scanning
+# the rules box column by column, in grey levels:
+#
+#     parchment face   median 244-245   sd 0.4 - 2.7
+#     the curled rod   median 131-234   sd 64  - 90
+#
+# The two populations do not touch, so the threshold is put in the gap rather than fitted to
+# either edge of it — the same way CONTRAST_MIN sits between its two clusters.
+#
+# It is the SPREAD and not the mean because the mean does not separate them: a face can be lit
+# across a gradient, stained, or dark on one surface and pale on the next, while ornament is
+# ornament because it has structure — an edge, a shadow, hatching. That also makes one threshold
+# work for the DARK title plate and the PALE rules slab, which no value-based test can do.
+#
+# BUT AN ABSOLUTE NUMBER IS STYLE-DEPENDENT, and a fixed 16 was wrong. MEASURED 2026-08-16 on
+# three Ink Drawing Craterhoofs: that style hatches every surface, so the FACE reads as structured
+# too, the peel ran to its cap on 5 of 9 surfaces, and 2 of the 3 cards came back UNSOUND
+# [text_too_small] — the peel had taken the room the model had correctly left for the text. The
+# one card whose surfaces happened to be smooth peeled 90-96% and passed.
+#
+# So the threshold is taken from the surface's OWN interior instead. Ornament is not "textured",
+# it is textured RELATIVE TO the thing it sits on, which is true of a smooth parchment with a
+# carved rod and of a hatched ink panel with a heavier hatched rim alike.
+FACE_RATIO = 3.0
+# A floor, so a perfectly flat synthetic surface (baseline ~0) does not treat its own noise as
+# ornament and peel itself away.
+FACE_FLOOR = 6.0
+# Peeling is capped so a misread can never eat the surface. A rim wide enough to take a third of
+# the box is not a rim, and a box that wrong is better printed on and reported by `check` than
+# silently shrunk to nothing.
+FACE_MAX_PEEL = 0.30
+
+
+def printable_face(image, box, ratio=FACE_RATIO):
+    """`box` shrunk to the flat interior text can actually sit on.
+
+    MEASURED 2026-08-16 (bd mtg-1uv and its siblings): `panels.detect` reports the whole painted
+    OBJECT, and the part we can print on is a rim's width inside it. Craterhoof's rules text came
+    back printed onto the scroll's curled rod — "Haste", "control", "end of turn" all beginning on
+    the rod rather than the parchment — and the same fault is what puts a P/T on a shield's bright
+    rim and mana pips over a plate's edge. One box, three surfaces, one bug.
+
+    `panels.py` already ASKS for the inner usable area and is ignored; that instruction has now
+    failed on four surfaces, so this is measured from the pixels instead of requested again.
+
+    The invariant is UNIFORMITY, not value. Only the rules strip is pale — `check.contrast`
+    enforces that at 5.0:1 — while the title and type plates are briefed DARK, so a "find the pale
+    part" scan would peel a title plate away entirely. What every printable face does share is that
+    it is EVEN, which the brief states outright: "keep that band even in value so printed letters
+    stay readable". Rim, rod, carved boss and a vine crossing in front are all things that DIFFER
+    from that interior, whichever direction they differ in.
+
+    So: measure how much structure this surface's OWN interior carries, then peel inward from each
+    edge while the boundary line carries much more than that. A clean rectangular plate peels
+    nothing, and a surface whose face is as busy as its rim peels nothing either — see below, that
+    outcome is deliberate.
+    """
+    x0, y0, x1, y1 = box
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return box  # too small to sample; the caller's own guards cover it
+    region = image.crop(box).convert("L")
+    width, height = region.size
+
+    # Each line is sampled over its own middle half, never its full length. A column read top to
+    # bottom crosses the surface's own top and bottom ornament, so EVERY column comes back
+    # structured and the peel runs to its cap — measured, on all four surfaces of all three cards.
+    # The middle half is the part no perpendicular edge can reach, which is the same reason the
+    # colour reference in `surface_is_dark` is taken from the middle.
+    ymid0, ymid1 = height // 4, height - height // 4
+    xmid0, xmid1 = width // 4, width - width // 4
+
+    def spread(line):
+        return ImageStat.Stat(line).stddev[0]
+
+    # What this surface's own face looks like, sampled down the middle where no rim reaches.
+    baseline = sorted(
+        spread(region.crop((x, ymid0, x + 1, ymid1)))
+        for x in range(xmid0, xmid1, max(1, (xmid1 - xmid0) // 24))
+    )
+    threshold = max(FACE_FLOOR, (baseline[len(baseline) // 2] if baseline else 0) * ratio)
+
+    def peel(length, line_at):
+        """How many lines in from one edge are ornament rather than face.
+
+        Returning the CAP means the scan never found the face, not that the whole edge is rim.
+        MEASURED 2026-08-16: capping out and shrinking by the maximum anyway took the room the
+        model had correctly left for the text, and 2 of 3 Ink Drawing Craterhoofs came back
+        UNSOUND [text_too_small]. So a cap-out gives the box back untouched — the behaviour we had
+        before this function existed, which is a known quantity rather than a new failure.
+        """
+        limit = int(length * FACE_MAX_PEEL)
+        cut = 0
+        while cut < limit and spread(line_at(cut)) > threshold:
+            cut += 1
+        return 0 if cut >= limit else cut
+
+    # WIDTH ONLY, and this is the whole of the restraint. MEASURED 2026-08-16 on four blanks:
+    #
+    #   - Every observed defect was horizontal. Text began on the scroll's LEFT or RIGHT rod;
+    #     nothing ever landed on a top or bottom rim, because `_rules` centres the block
+    #     vertically and it rarely fills the panel.
+    #   - Height is what sets type size. `textlayout.fit_across` steps the size down until the
+    #     block fits the box HEIGHT, so every pixel peeled off the top or bottom comes straight
+    #     out of the type. Peeling both axes took run1's panel from 360px to 242px and its text
+    #     from 49 to 35, under the 48px RULES_MIN — turning a card that was fine into UNSOUND
+    #     [text_too_small]. Width-only was equal or better on all four blanks.
+    #
+    # Vertical rims are therefore left to `check.contrast` and `panel_palette`, which already
+    # handle "the text is on a surface it reads badly against" without costing a single pixel.
+    left = peel(width, lambda i: region.crop((i, ymid0, i + 1, ymid1)))
+    right = peel(width, lambda i: region.crop((width - i - 1, ymid0, width - i, ymid1)))
+    return x0 + left, y0, x1 - right, y1
+
+
+# How far past the detected box a plate may be grown, as a multiple of the box's own height. A
+# plate more than this much bigger than what was reported is not a detection to repair, it is a
+# detection to distrust.
+PLATE_MAX_GROWTH = 2.5
+
+
+def plate_extent(image, box, ratio=FACE_RATIO):
+    """`box` grown DOWN and UP to the full height of the plate it sits on.
+
+    MEASURED 2026-08-16, running `detect` four times over the SAME stored blank:
+
+        title box height   132   125   120   214 px
+        name size          90    85    82    146
+
+    The same plate, the same image, and a 78% swing in how big the card's name is printed — which
+    is what put a tiny "Craterhoof Behemoth" on an otherwise good card. One of those four runs also
+    came back 672px wide against 1430 for the others, i.e. half the plate.
+
+    `_title` sets the name as a fraction of the box's HEIGHT, so an unstable box is an unstable
+    name. This is the same disease as the P/T shield (bd mtg-1uv, "a fixed box cannot track a
+    painted one") on a second surface, and the same answer: stop trusting the reported geometry and
+    measure the painted one.
+
+    The statistic is `printable_face`'s, run outward instead of inward — a row still belongs to the
+    plate while it looks like the plate's own interior. Growth is capped, and a plate that grows to
+    the cap is left at its detected size rather than trusted, on the same reasoning as the peel:
+    running to the limit means the scan never found the edge.
+    """
+    x0, y0, x1, y1 = box
+    if x1 - x0 < 8 or y1 - y0 < 8:
+        return box
+    height = y1 - y0
+    xmid0, xmid1 = x0 + (x1 - x0) // 4, x1 - (x1 - x0) // 4
+    core = image.crop((xmid0, y0 + height // 4, xmid1, y1 - height // 4)).convert("L")
+    rows = sorted(
+        ImageStat.Stat(core.crop((0, y, core.width, y + 1))).stddev[0]
+        for y in range(0, core.height, max(1, core.height // 24))
+    )
+    threshold = max(FACE_FLOOR, (rows[len(rows) // 2] if rows else 0) * ratio)
+    limit = int(height * (PLATE_MAX_GROWTH - 1) / 2)
+
+    def grow(step, edge):
+        moved = 0
+        while moved < limit:
+            y = edge + step * (moved + 1)
+            if y < 0 or y >= image.height:
+                break
+            line = image.crop((xmid0, y, xmid1, y + 1)).convert("L")
+            if ImageStat.Stat(line).stddev[0] > threshold:
+                break
+            moved += 1
+        return 0 if moved >= limit else moved
+
+    return x0, y0 - grow(-1, y0), x1, y1 + grow(1, y1)
+
+
 def surface_is_dark(image, box):
     """True if text on this surface has to be light.
 
@@ -280,22 +473,47 @@ def compose(png, face, panels, include_flavor_text=False):
     image = Image.open(png).convert("RGBA") if not isinstance(png, Image.Image) else png.copy()
     light = light_direction(image)
 
+    def face_box(panel):
+        """The detected object, shrunk to the part of it we can actually print on."""
+        return printable_face(image, _box(panel, image.size))
+
+    def plate_box(panel):
+        """A display plate, grown back to its painted height before the rim is peeled off.
+
+        The display plates set their type as a fraction of the box's HEIGHT, so they are the two
+        surfaces where an unstable detection becomes a visibly wrong card rather than a slightly
+        tight one — measured at a 78% swing in name size across four detections of one image.
+        """
+        return printable_face(image, plate_extent(image, _box(panel, image.size)))
+
     if panels.get("title"):
-        _title(image, face, _box(panels["title"], image.size), light)
+        _title(image, face, plate_box(panels["title"]), light)
     if panels.get("type"):
-        _display(image, face["type_line"], _box(panels["type"], image.size), TYPE_SIZE, light)
+        _display(image, face["type_line"], plate_box(panels["type"]), TYPE_SIZE, light)
     overflowed = False
     if panels.get("rules") and face.get("oracle_text"):
         shield = _box(panels["pt"], image.size) if panels.get("pt") else None
-        boxes = [_box(panel, image.size) for panel in _rules_panels(panels["rules"])]
+        boxes = [face_box(panel) for panel in _rules_panels(panels["rules"])]
         # Named to match the reference site's own generate payload, so the frontend passes its
         # toggle straight through. Off by default: flavour text competes with the rules for the
         # one panel we get, and rules text losing size to prose is the worse trade.
         flavour = (face.get("flavor_text") or "") if include_flavor_text else ""
         overflowed = _rules(image, face["oracle_text"], boxes, shield, light, flavour)
     if panels.get("pt") and face.get("power") is not None:
+        # DELIBERATELY not run through `printable_face`. MEASURED 2026-08-16: on all three cards
+        # the P/T tab peels straight to FACE_MAX_PEEL, which means the scan cannot tell rim from
+        # face at that size rather than that the tab is all rim. The P/T already has a working
+        # mechanism — the enlarged corner paired into the detect call, commit e10ba96, which took
+        # detection 35% -> 88% — and bd mtg-1uv owns finishing it. Adding an unvalidated second
+        # shrink on top of that would put the one surface that just got better back at risk.
+        # RAISED 2026-08-16 from 0.50. Measured on a Phyrexian Obliterator whose tab came back
+        # 109px tall: at half the box the value read small against a generous plate, which is the
+        # same "smaller and less readable than theirs" report that moved NAME_SIZE and RULES_SIZE
+        # on 2026-08-10. Safe to raise now in a way it was not then — detection of this surface
+        # measured 12/12 today against 35% when it was briefed as a shield, and the tab is asked
+        # for with a flat even face rather than a pointed rim.
         pt = f"{face['power']}/{face['toughness']}"
-        _display(image, pt, _box(panels["pt"], image.size), 0.50, light)
+        _display(image, pt, _box(panels["pt"], image.size), PT_SIZE, light)
     return image, overflowed
 
 
@@ -305,31 +523,48 @@ def _title(image, face, box, light=(1, 1)):
     Closes the pip/name collision (bd mtg-6iy): both are ours now, so the space the cost needs is
     measured and subtracted before the name is laid out, rather than the two being placed
     independently and hoped about.
+
+    CLIENT 2026-08-16, on Craterhoof (`{5}{G}{G}{G}`): "the mana symbols are a bit large on this
+    card." They were not drawn larger than usual — the NAME was drawn smaller. The pip used to be
+    sized once from the plate and the name then shrank around it, so the more pips a cost had, the
+    further the two drifted apart: Raphael's two pips looked right beside a full-size name and
+    Craterhoof's four did not. So the two shrink TOGETHER now. The loop is the only honest way to
+    do it, because the fit is circular — the pips set how much room the name has, and the name's
+    size sets how big the pips are.
     """
     x0, y0, x1, y1 = box
     fill, stroke, shadow = panel_palette(image, box, display=True)
     height = y1 - y0
     pad = round(height * PAD) + round((x1 - x0) * 0.015)
     size = max(12, round(height * NAME_SIZE))
-    pip_px = max(1, round(size * 0.92))
+    tokens = list(reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")))
 
+    def pip_size(at):
+        return max(1, round(at * 0.92))
+
+    def cost_width(at):
+        """What the pips take, gap included — the loop below spends it before the name."""
+        pip_px = pip_size(at)
+        return len(tokens) * (pip_px + round(pip_px * 0.10))
+
+    font = ImageFont.truetype(str(fonts.DISPLAY), size)
+    tracking = size * TRACKING
+    room = (x1 - x0) - 3 * pad
+    while size > 11 and _tracked_width(font, face["name"], tracking) > room - cost_width(size):
+        size -= 1
+        font = ImageFont.truetype(str(fonts.DISPLAY), size)
+        tracking = size * TRACKING
+
+    pip_px = pip_size(size)
     layer, draw = _layer(box)
     x = (x1 - x0) - pad
-    for token in reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")):
+    for token in tokens:
         pip = symbols.pip("{" + token + "}", pip_px)
         if pip is None:
             continue
         x -= pip_px
         layer.alpha_composite(pip, (round(x), round((height - pip_px) / 2)))
         x -= round(pip_px * 0.10)
-
-    available = x - 2 * pad
-    font = ImageFont.truetype(str(fonts.DISPLAY), size)
-    tracking = size * TRACKING
-    while size > 11 and _tracked_width(font, face["name"], tracking) > available:
-        size -= 1
-        font = ImageFont.truetype(str(fonts.DISPLAY), size)
-        tracking = size * TRACKING
     ascent, descent = font.getmetrics()
     _write_tracked(
         draw,
@@ -463,7 +698,7 @@ def _rules(image, text, boxes, shield=None, light=(1, 1), flavour=""):
     """
     measures = []
     for x0, y0, x1, y1 in boxes:
-        pad_x, pad_y = round((x1 - x0) * PAD), round((y1 - y0) * PAD)
+        pad_x, pad_y = round((x1 - x0) * RULES_PAD), round((y1 - y0) * RULES_PAD)
         measures.append(((x1 - x0) - 2 * pad_x, (y1 - y0) - 2 * pad_y))
     paragraphs = _assign(text, measures)
     boxes = boxes[: len(paragraphs)]
@@ -477,7 +712,7 @@ def _rules(image, text, boxes, shield=None, light=(1, 1), flavour=""):
     inner, pads, excludes = [], [], []
     for box in boxes:
         x0, y0, x1, y1 = box
-        pad_x, pad_y = round((x1 - x0) * PAD), round((y1 - y0) * PAD)
+        pad_x, pad_y = round((x1 - x0) * RULES_PAD), round((y1 - y0) * RULES_PAD)
         width, height = (x1 - x0) - 2 * pad_x, (y1 - y0) - 2 * pad_y
         pads.append((pad_x, pad_y))
         inner.append((width, height))

@@ -1,7 +1,7 @@
 """Compositing onto synthetic surfaces, so the geometry is checked without an AI call."""
 
 from django.test import SimpleTestCase
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from cards import compositor, textlayout
 
@@ -89,6 +89,135 @@ class ComposeTests(SimpleTestCase):
         # The rightmost eighth holds the cost; the name must not have reached into it.
         strip = out.crop((x1 - (x1 - x0) // 8, y0, x1, y1)).convert("RGB")
         self.assertIsNotNone(strip)  # drawn without raising is the contract being checked
+
+    def test_the_cost_shrinks_with_the_name_instead_of_crowding_it(self):
+        """CLIENT 2026-08-16, on Craterhoof ({5}{G}{G}{G}): "the mana symbols are a bit large on
+        this card." The pips were not drawn bigger — the name was drawn smaller, because the pip
+        was sized once from the plate and the name then shrank around it. Four pips crushed the
+        name; Raphael's two did not, which is why only one of the two cards drew the complaint.
+
+        So the check is a RATIO, not a size. Both are allowed to shrink as the cost grows; what
+        may not change is how big the pips are next to the letters. Measuring the total ink in the
+        plate is what this test did first and it passed against the bug, because the bounding box
+        is set by whichever of the two is taller — the two have to be measured apart."""
+        def name_and_pip(mana_cost):
+            face = {**FACE, "name": "Craterhoof Behemoth", "mana_cost": mana_cost}
+            out, _ = compositor.compose(card((28, 30, 34)), face, PANELS)
+            x0, y0, x1, y1 = compositor._box(PANELS["title"], out.size)
+            width = x1 - x0
+
+            def ink_height(start, end):
+                """Everything drawn is lighter than the dark plate it was drawn onto."""
+                band = out.crop((x0 + int(width * start), y0, x0 + int(width * end), y1))
+                rows = [y for y in range(band.height) for x in range(band.width)
+                        if band.convert("L").getpixel((x, y)) > 120]
+                self.assertTrue(rows, f"nothing drawn in {start}-{end} of the title plate")
+                return max(rows) - min(rows)
+
+            # The name always starts at the left pad; the last pip always ends at the right one.
+            return ink_height(0, 0.30), ink_height(0.90, 1.0)
+
+        ratios = []
+        for cost in ("{G}", "{5}{G}{G}{G}", "{2}{G}{G}{G}{G}{G}{G}{G}"):
+            name, pip = name_and_pip(cost)
+            ratios.append(pip / name)
+        # MEASURED: 1.24 / 1.23 / 1.22 after the fix, against 1.24 / 1.45 / 1.88 before it — the
+        # pips held full height while the name alone gave way, and that is what the client saw.
+        self.assertLess(max(ratios) - min(ratios), 0.10,
+                        f"pip-to-name proportion drifts with cost length: {ratios}")
+
+    def test_a_cost_of_many_pips_still_fits_inside_its_plate(self):
+        """The pips are sized off the plate, so a cost long enough to force the loop down must
+        still land inside it — an eight-pip cost is the worst real case (Emrakul-class)."""
+        face = {**FACE, "name": "Craterhoof Behemoth", "mana_cost": "{2}{G}{G}{G}{G}{G}{G}{G}"}
+        out, _ = compositor.compose(card((28, 30, 34)), face, PANELS)
+        x0, y0, x1, y1 = compositor._box(PANELS["title"], out.size)
+        above = out.crop((x0, max(0, y0 - 12), x1, y0)).convert("L")
+        below = out.crop((x0, y1, x1, min(out.height, y1 + 12))).convert("L")
+        for name, band in (("above", above), ("below", below)):
+            self.assertLess(max(band.getdata()), 120,
+                            f"the cost spilled {name} the title plate")
+
+
+class PrintableFaceTests(SimpleTestCase):
+    """`panels.detect` reports the painted OBJECT; only its flat interior can be printed on.
+
+    MEASURED 2026-08-16 on Craterhoof's scroll — the card whose rules text came back printed onto
+    the curled rod, with "Haste", "control" and "end of turn" all beginning off the parchment.
+    Scanning that box column by column in grey levels gave two populations that do not touch:
+
+        parchment face   median 244-245   sd 0.4 - 2.7
+        the curled rod   median 131-234   sd 64  - 90
+
+    So the test is built the way the constant was: a flat face with structured ornament at its
+    ends, and the scan has to keep the first and drop the second.
+    """
+
+    @staticmethod
+    def surface(width=800, height=300, rod=90, pale=245, ink=(70, 60, 50)):
+        """A flat pale face with a hatched rod at each end, like a scroll.
+
+        The hatching runs ACROSS the rod, which is how the real ones are drawn and is the whole
+        point: the scan reads a column's spread down its own length, so a rod hatched with
+        vertical strokes would be as uniform as the parchment and rightly kept.
+        """
+        image = Image.new("RGBA", (width, height), (pale, pale - 4, pale - 18, 255))
+        draw = ImageDraw.Draw(image)
+        for y in range(0, height, 6):
+            draw.line([(0, y), (rod, y)], fill=ink + (255,), width=3)
+            draw.line([(width - rod, y), (width, y)], fill=ink + (255,), width=3)
+        return image
+
+    def test_ornament_at_the_ends_is_peeled_and_the_flat_face_is_kept(self):
+        image = self.surface()
+        face = compositor.printable_face(image, (0, 0, 800, 300))
+        self.assertGreaterEqual(face[0], 80, f"the left rod was not peeled: {face}")
+        self.assertLessEqual(face[2], 720, f"the right rod was not peeled: {face}")
+        # And it must not eat the face it was protecting.
+        self.assertLess(face[0], 130)
+        self.assertGreater(face[2], 670)
+
+    def test_height_is_never_peeled_because_height_is_the_type_size(self):
+        """MEASURED 2026-08-16: peeling top and bottom as well took run1's rules panel from 360px
+        to 242px and its text from 49 to 35, under the 48px RULES_MIN — a card that was fine
+        became UNSOUND [text_too_small]. `fit_across` steps the size down until the block fits the
+        box HEIGHT, so every pixel off the top or bottom comes straight out of the type.
+
+        And nothing was gained: every observed defect was horizontal, text beginning on a left or
+        right rod. Vertical rims are left to `check.contrast` and `panel_palette`, which cost no
+        pixels."""
+        image = self.surface()
+        rimmed = ImageDraw.Draw(image)
+        for x in range(0, 800, 5):  # a heavy hatched rim along the top and bottom edges
+            rimmed.line([(x, 0), (x, 60)], fill=(60, 50, 40, 255), width=2)
+            rimmed.line([(x, 240), (x, 300)], fill=(60, 50, 40, 255), width=2)
+        face = compositor.printable_face(image, (0, 0, 800, 300))
+        self.assertEqual((face[1], face[3]), (0, 300), f"height was peeled: {face}")
+
+    def test_a_clean_plate_is_left_exactly_as_it_was_found(self):
+        """The scan runs on every surface, so its no-op case is the one that has to be free."""
+        flat = Image.new("RGBA", (800, 300), (30, 34, 40, 255))
+        self.assertEqual(compositor.printable_face(flat, (0, 0, 800, 300)), (0, 0, 800, 300))
+
+    def test_a_dark_plate_peels_the_same_way_a_pale_one_does(self):
+        """Only the rules strip is pale — `check.contrast` enforces that — while the title and
+        type plates are briefed DARK. A scan keyed on VALUE would peel a title plate to nothing,
+        which is why the rule is spread along the line instead."""
+        # Carved ends on a near-black plate read by catching the light, not by going
+        # darker still — which is also the scan's known ceiling: ornament with no
+        # contrast against its own plate is ornament the spread cannot see.
+        dark = self.surface(pale=34, ink=(205, 195, 175))
+        face = compositor.printable_face(dark, (0, 0, 800, 300))
+        self.assertGreaterEqual(face[0], 80, f"the rod was not peeled on a dark plate: {face}")
+        self.assertLessEqual(face[2], 720)
+
+    def test_the_peel_is_capped_so_a_misread_cannot_eat_the_surface(self):
+        """A box wrong enough to look like ornament all the way across is better printed on and
+        reported by `check` than silently shrunk to nothing."""
+        noise = Image.effect_noise((800, 300), 90).convert("RGBA")
+        face = compositor.printable_face(noise, (0, 0, 800, 300))
+        self.assertGreaterEqual(face[2] - face[0], 800 * (1 - 2 * compositor.FACE_MAX_PEEL) - 1)
+        self.assertGreaterEqual(face[3] - face[1], 300 * (1 - 2 * compositor.FACE_MAX_PEEL) - 1)
 
 
 class PalettePlusLightTests(SimpleTestCase):
@@ -470,3 +599,59 @@ class KerningTests(SimpleTestCase):
         text = "Terror of the Peaks"
         stamped = sum(font.getlength(c) for c in text)
         self.assertLess(compositor._tracked_width(font, text, 0), stamped)
+
+
+class PlateExtentTests(SimpleTestCase):
+    """A display plate is measured, not taken on trust.
+
+    MEASURED 2026-08-16, four `detect` runs over ONE stored blank: title box heights 132, 125, 120
+    and 214px, so the printed name swung 82-146. Same disease as bd mtg-1uv on a second surface,
+    and the same answer — measure the painted plate instead of trusting the reported box.
+    """
+
+    @staticmethod
+    def plate(width=900, height=400, top=100, bottom=300, shade=40):
+        """A flat plate band across the middle, hatched art above and below it.
+
+        The art is hatched VERTICALLY, which is what makes this fixture test anything: growth
+        walks outward row by row, so art drawn in horizontal bands leaves every row uniform and
+        the scan sails straight through it. Real art varies both ways; a first version of this
+        fixture did not, and passed against a function that never grew at all.
+        """
+        image = Image.new("RGBA", (width, height), (shade, shade + 4, shade + 8, 255))
+        draw = ImageDraw.Draw(image)
+        for x in range(0, width, 5):
+            draw.line([(x, 0), (x, top)], fill=(210, 200, 180, 255), width=2)
+            draw.line([(x, bottom), (x, height)], fill=(210, 200, 180, 255), width=2)
+        return image
+
+    def test_a_box_reported_short_is_grown_back_to_the_plate(self):
+        image = self.plate()
+        tight = compositor.plate_extent(image, (0, 160, 900, 240))  # half the real plate
+        self.assertLessEqual(tight[1], 115, f"top was not grown: {tight}")
+        self.assertGreaterEqual(tight[3], 285, f"bottom was not grown: {tight}")
+
+    def test_two_different_reported_boxes_land_on_the_same_plate(self):
+        """The point is not a bigger box, it is the SAME box whichever detection arrived.
+
+        Both inputs are within PLATE_MAX_GROWTH of the real plate, which is the range this repairs:
+        the four real detections spanned 120-214px on a 240px plate, a spread of 1.8x. A box far
+        smaller than that is out of reach by design and is left alone rather than stretched — see
+        `test_a_plate_that_grows_to_the_cap_is_left_alone`.
+        """
+        image = self.plate()
+        a = compositor.plate_extent(image, (0, 150, 900, 250))
+        b = compositor.plate_extent(image, (0, 140, 900, 265))
+        self.assertLess(abs((a[3] - a[1]) - (b[3] - b[1])), 20, f"{a} vs {b}")
+
+    def test_growth_stops_at_the_art_and_never_runs_off_the_card(self):
+        image = self.plate()
+        grown = compositor.plate_extent(image, (0, 150, 900, 250))
+        self.assertGreaterEqual(grown[1], 90, "grew up into the hatched art")
+        self.assertLessEqual(grown[3], 310, "grew down into the hatched art")
+
+    def test_a_plate_that_grows_to_the_cap_is_left_alone(self):
+        """Running to the limit means the scan never found the plate's edge — same reasoning as
+        the peel, where capping out and trusting the result put text on a scroll rod."""
+        flat = Image.new("RGBA", (900, 400), (40, 44, 48, 255))
+        self.assertEqual(compositor.plate_extent(flat, (0, 150, 900, 250)), (0, 150, 900, 250))
