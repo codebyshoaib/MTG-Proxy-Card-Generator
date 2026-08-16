@@ -153,18 +153,19 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
         detected = panels.detect(
             png, paragraphs=paragraphs, expect_pt=face.get("power") is not None
         )
-        # Before anything grades this: a creature whose shield went undetected gets it placed from
-        # the strip below it (bd mtg-wfp). Done HERE rather than in the compositor so `check` sees
-        # the same card the customer will — otherwise it fires `missing_pt` and burns a repaint on
-        # art that was already right, which is the whole cost of this bug.
-        if face.get("power") is not None and not detected.get("pt"):
-            inferred = panels.infer_pt(detected)
-            if inferred:
-                detected["pt"] = inferred
-                note(
-                    "the P/T shield was not detected — placed at the corner the shield sits in on "
-                    "every card that was measured, rather than repainting a card that is fine"
-                )
+        # A guessed P/T box used to be substituted here when detection missed (bd mtg-wfp). DELETED
+        # 2026-08-16 rather than tuned, which is what bd mtg-1uv asked for. The guess existed
+        # because detection of this one surface was unreliable — 7 of 20 runs over the same stored
+        # blanks on 2026-08-15. Re-running that identical experiment today, after the enlarged
+        # corner was paired into the call (e10ba96) and the tab shape was opened away from the
+        # shield, gives 24 of 24 on six creatures, plus 15 of 15 across the day's live runs.
+        #
+        # Its premise gone, what was left was a fitted box that is wrong whenever it does fire: it
+        # overhung the painted surface on 5 of 5 undetected cards, and outside its fitted domain
+        # the error flips sign (Terror of the Peaks, 0.038 high, printing the 5/4 on the rim). A
+        # P/T that looks placed but is not beats a loud failure only if the alternative is silence,
+        # and it is not — `check` fires missing_pt, the card is repainted, and a card that still
+        # has no tab is reported UNSOUND rather than shipped with a number hanging off a rim.
         card, overflowed = compositor.compose(
             io.BytesIO(png), face, detected,
             include_flavor_text=options.include_flavor_text,

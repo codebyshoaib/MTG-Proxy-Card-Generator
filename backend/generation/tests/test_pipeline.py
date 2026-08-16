@@ -99,12 +99,18 @@ class NamedFirstTests(SimpleTestCase):
 
 
 class MissingShieldTests(SimpleTestCase):
-    """A creature whose shield went undetected gets it placed instead of costing a repaint.
+    """A creature whose tab went undetected is REPORTED, never given a guessed box.
 
-    bd mtg-wfp. The shield IS painted — confirmed by eye on the stored blanks — and `detect` finds
-    it on 7 of 20 runs over the same fixed images. Every miss used to fire `missing_pt`, burn a
-    full extra image call on art that was already correct, and if the repaint missed too, ship a
-    creature with no power or toughness on it.
+    bd mtg-1uv, resolved 2026-08-16 by deleting `panels.infer_pt` rather than tuning it. The guess
+    existed because detection of this one surface was unreliable — 7 of 20 runs over the same
+    stored blanks on 2026-08-15. Re-running that identical experiment after the enlarged corner was
+    paired into the call and the tab shape was opened away from the shield gives 24 of 24, plus
+    15 of 15 across a day of live runs.
+
+    With its premise gone, what remained was a box that is wrong whenever it fires: it overhung the
+    painted surface on 5 of 5 undetected cards, and outside its fitted domain the error flips sign.
+    So a miss now reaches `check`, fires `missing_pt` and is repainted; a card that still has no tab
+    is reported UNSOUND rather than shipped with a number hanging off a rim.
     """
 
     CREATURE = {**FACE, "power": "4", "toughness": "7"}
@@ -132,26 +138,20 @@ class MissingShieldTests(SimpleTestCase):
             pipeline.creative_full(face, attempts=2)
         return generate, seen["panels"]
 
-    def test_the_grader_sees_the_placed_shield_so_no_repaint_is_burnt(self):
-        """Placed BEFORE `check` runs, deliberately: place it after and the card is still graded
-        `missing_pt` and repainted, which is the entire cost of this bug."""
-        generate, panels_seen = self._run(self.CREATURE, self.STRIP)
-        self.assertIn("pt", panels_seen)
-        self.assertEqual(generate.call_count, 1, "a correct card was repainted anyway")
-
-    def test_a_card_with_no_power_is_left_alone(self):
-        """An instant has no P/T to print, so inventing a shield for it would be a surface with
-        nothing on it — the defect `check.spare` exists to catch."""
-        _, panels_seen = self._run(FACE, self.STRIP)
+    def test_an_undetected_tab_reaches_the_grader_unfilled(self):
+        """The whole point of the deletion. `check` must see the card the customer would get, and
+        a card whose tab was not found has no P/T surface — so `missing_pt` fires and the pipeline
+        repaints, instead of the grader being handed a box nobody painted."""
+        _, panels_seen = self._run(self.CREATURE, self.STRIP)
         self.assertNotIn("pt", panels_seen)
 
-    def test_a_detected_shield_is_never_overwritten_by_the_guess(self):
+    def test_a_detected_tab_is_passed_through_untouched(self):
         real = (0.79, 0.83, 0.94, 0.96)
         _, panels_seen = self._run(self.CREATURE, {**self.STRIP, "pt": real})
         self.assertEqual(panels_seen["pt"], real)
 
-    def test_with_no_strip_to_anchor_to_the_card_still_fails_honestly(self):
-        """No guess is better than a guess with nothing behind it: P/T stays unprinted, which is
-        visible, rather than being stamped somewhere invented."""
-        _, panels_seen = self._run(self.CREATURE, {"title": (0.05, 0.03, 0.95, 0.11)})
+    def test_a_card_with_no_power_is_left_alone(self):
+        """An instant has no P/T to print, so a surface for it would be one with nothing on it —
+        the defect `check.spare` exists to catch."""
+        _, panels_seen = self._run(FACE, self.STRIP)
         self.assertNotIn("pt", panels_seen)
