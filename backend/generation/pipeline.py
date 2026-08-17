@@ -13,6 +13,7 @@ import io
 from typing import NamedTuple
 
 import requests
+from PIL import Image
 
 from cards import compositor, scryfall
 from generation import bleed, check, gemini, panels, prompts, refusals
@@ -38,6 +39,11 @@ class Options(NamedTuple):
     # Borderless is the default — client, 2026-08-13. False builds the card's edge out of the
     # scene instead of running the art full bleed.
     borderless: bool = True
+    # OFF by default: the composited path is the one with 82 measured generations behind it. The
+    # lettered path has 30, and it is on trial for the reasons in `prompts._lettering_block` — the
+    # model sizes the panel to text it can see, and scene material crosses in FRONT of lettering it
+    # set itself, which is the one thing the composite-afterwards order can never do.
+    lettered: bool = False
 
 
 class Result(NamedTuple):
@@ -89,6 +95,18 @@ def prepare(face, use_reference=True):
     return face, reference, licensed
 
 
+def _art_brief(face, options, licensed, reference, corrections=()):
+    return prompts.art_only(
+        face,
+        options.art_style,
+        reference=bool(reference),
+        licensed=licensed,
+        direction=options.art_direction,
+        palette=options.color_palette,
+        corrections=corrections,
+    )
+
+
 def art_brief(face, options=Options(), note=_noop):
     """(prompt, reference bytes) for Art Only, without spending a generation.
 
@@ -101,27 +119,63 @@ def art_brief(face, options=Options(), note=_noop):
             f"{face['name']} exists only as a licensed crossover. Painting its game identity "
             "from the type line, not the character."
         )
-    return prompts.art_only(
-        face,
-        options.art_style,
-        reference=bool(reference),
-        licensed=licensed,
-        direction=options.art_direction,
-        palette=options.color_palette,
-    ), reference
+    return _art_brief(face, options, licensed, reference), reference
 
 
-def art(face, options=Options(), note=_noop):
-    """Art Only: one image call, encoded image bytes out. BUILD-SPEC §3 — it stops after step 3.
+def art(face, options=Options(), attempts=2, note=_noop):
+    """Art Only, end to end, for one face. BUILD-SPEC §3 — it stops after step 3.
 
-    The format is the model's, not ours — measured JPEG, not PNG. Anything writing these to a
-    named file has to re-encode; `jobs._write_png` is what does it.
+    One image call, the painted margin cut off it, then the two gates that read the picture
+    itself, then a repaint if either fires. Everything `creative_full` does EXCEPT the parts that
+    read furniture, because Art Only paints none.
+
+    Until 2026-08-19 this function was two lines — build the brief, return the model's bytes — and
+    that was the whole of Art Only (bd mtg-l4x). Nothing trimmed it, nothing graded it, nothing
+    repainted it: whatever the model returned was the deliverable. MEASURED on the sign-off pack,
+    7 Art Only faces against 7 Creative Full faces of the same cards in the same batch: 2 of the 7
+    were above the `MATTED` gate and one was a fully bordered card with rounded corners, the exact
+    defect the client circled on 2026-08-13. All 7 shipped marked `ok`. The Creative Full column of
+    the same cards measured 0.000 six times.
+
+    It hid because Art Only is 12 of 82 faces ever generated — one seventh of the testing for half
+    of the client's mode choice — and every check was written against a composited card. It is the
+    same reason this mode once shipped a JPEG under a `.png` name (bd mtg-ctu).
+
+    What is deliberately NOT run here: `panels.detect`, `check.inspect`, `check.contrast`. All
+    three read panel boxes and there are no panels. `matted` and `colour_identity` read the picture
+    and apply unchanged — a printed white mat is wrong on standalone art too, and a mono-green card
+    painted purple misstates its colour whether or not a frame is drawn around it.
     """
-    prompt, reference = art_brief(face, options, note)
-    return gemini.generate(prompt, reference)
+    face, reference, licensed = prepare(face, options.use_original_art_reference)
+    if licensed:
+        note(
+            f"{face['name']} exists only as a licensed crossover. Painting its game identity "
+            "from the type line, not the character."
+        )
+
+    attempt = 0
+    corrections = []
+    while True:
+        attempt += 1
+        png = gemini.generate(_art_brief(face, options, licensed, reference, corrections), reference)
+        if options.borderless:
+            png, depth = bleed.trim(png)
+            if depth:
+                note(f"trimmed a {depth:.1%} painted margin — the brief asked for full bleed")
+        # The model returns JPEG, so this decode is also what makes the written file a real PNG
+        # (bd mtg-ctu). It used to live in `jobs._write_png`; the gates need the image anyway.
+        image = Image.open(io.BytesIO(png)).convert("RGB")
+
+        problems = [problem for problem in [check.colour_identity(image, face)] if problem]
+        if options.borderless:
+            problems += [problem for problem in [check.matted(image)] if problem]
+        if not problems or attempt >= max(1, attempts):
+            return Result(image, problems, {}, None)
+        corrections = [problem.detail for problem in problems]
+        note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
 
 
-def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
+def creative_full(face, options=Options(), attempts=2, source=None, panel_boxes=None, note=_noop):
     """Creative Full, end to end, for one face.
 
     One image call for the art and its blank furniture, one vision call for where the surfaces
@@ -132,6 +186,14 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
     `source` composites onto an empty-furniture PNG already on disk instead of generating one,
     which is what to use while tuning the compositor: it costs nothing and keeps the layout the
     same between runs.
+
+    `detected` reuses panel boxes already on disk instead of asking for them again, and it is the
+    other half of that. `source` alone still pays for a vision call and still lets the answer move,
+    so a compositor change measured that way is confounded with a detection change — which is the
+    exact ambiguity that stopped a diagnosis dead on 2026-08-15, when two cards tripped
+    `text_too_small` and nothing could say whether the model under-painted the strip or `detect`
+    under-reported it. The two need opposite fixes. With both, re-compositing stored art is free,
+    offline and deterministic, so the only thing that moved is the code.
     """
     face, reference, licensed = prepare(face, options.use_original_art_reference)
     # The ability count is a hint for how many pale strips to look for — the brief asks for one,
@@ -155,7 +217,18 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
             if depth:
                 note(f"trimmed a {depth:.1%} painted margin — the brief asked for full bleed")
 
-        detected = panels.detect(
+        if options.lettered:
+            card, detected, problems = _letter(png, face, options)
+            if not problems or source or attempt >= max(1, attempts):
+                return Result(card, problems, detected, None if source else png)
+            corrections = [problem.detail for problem in problems]
+            note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
+            continue
+
+        # `panel_boxes` and not `detected`: this is inside the retry loop, and reassigning the
+        # override would hand attempt 1's boxes to attempt 2's repainted image — boxes measured on
+        # a card that no longer exists, printed onto one nobody looked at.
+        detected = panel_boxes or panels.detect(
             png, paragraphs=paragraphs, expect_pt=face.get("power") is not None
         )
         # A guessed P/T box used to be substituted here when detection missed (bd mtg-wfp). DELETED
@@ -171,11 +244,19 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
         # P/T that looks placed but is not beats a loud failure only if the alternative is silence,
         # and it is not — `check` fires missing_pt, the card is repainted, and a card that still
         # has no tab is reported UNSOUND rather than shipped with a number hanging off a rim.
+        # Decoded once and handed to both: `compose` copies what it is given, so `blank` stays the
+        # surface the model painted, which is the only thing `check.obstructed` can grade against.
+        blank = Image.open(io.BytesIO(png)).convert("RGBA")
         card, overflowed = compositor.compose(
-            io.BytesIO(png), face, detected,
+            blank, face, detected,
             include_flavor_text=options.include_flavor_text,
         )
         problems = check.inspect(face, detected, overflowed)
+        # Graded on the BLANK, not the card: something painted across the panel is a fault in the
+        # art, and by the time the card exists the compositor has already put the crossing back in
+        # front of the text, which is what makes a mild one survivable and hides it from a grader
+        # looking at the finished card.
+        problems += [problem for problem in [check.obstructed(blank, detected, face)] if problem]
         # Both read the composited card rather than the geometry, which is why they sit here and
         # not in `inspect`. Contrast applies to every layout: a panel too dark for its own text is
         # unreadable whether or not the card runs to the edge.
@@ -197,6 +278,34 @@ def creative_full(face, options=Options(), attempts=2, source=None, note=_noop):
         note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
 
 
+def _letter(png, face, options):
+    """(card, boxes, problems) for one lettered attempt — the same two calls a composited card costs.
+
+    `panels.read_back` replaces `panels.detect`, so the mode is not more expensive: one image call
+    and one vision call either way. What that vision call answers changes completely, because a
+    lettered card is not a blank — see `read_back`'s own docstring.
+
+    The compositor still runs, for exactly one field. `check.proofread` grades everything else
+    against Scryfall, which is what `CLAUDE.md` requires of any mode where the AI writes game text.
+    """
+    read = panels.read_back(png, face)
+    # Only the title box is printed into. The rules boxes are read so `contrast` still has
+    # something to measure — a panel too dark to read is the defect that graded Sound on 10 of 10
+    # cards before that gate existed, and the model choosing its own panel does not make it safe.
+    detected = {key: read[key] for key in ("title", "rules") if read.get(key)}
+    card, _ = compositor.compose(io.BytesIO(png), face, detected, lettered=True)
+
+    problems = check.proofread(face, read)
+    # The one fault the read-back cannot see: it transcribes the card BEFORE the cost is stamped,
+    # so a cost about to land on the name passes every text check. Measured on the first live run.
+    problems += [problem for problem in [check.cost_collides(face, read)] if problem]
+    problems += [problem for problem in [check.contrast(card, detected)] if problem]
+    problems += [problem for problem in [check.colour_identity(card, face)] if problem]
+    if options.borderless:
+        problems += [problem for problem in [check.matted(card)] if problem]
+    return card, detected, problems
+
+
 def _paint(face, licensed, reference, options, note, corrections=()):
     """One image call: the card's art and its blank furniture, as PNG bytes.
 
@@ -212,7 +321,7 @@ def _paint(face, licensed, reference, options, note, corrections=()):
             face, options.art_style, reference=bool(reference), licensed=as_identity,
             direction=options.art_direction, palette=options.color_palette,
             notes=options.custom_art_notes, borderless=options.borderless,
-            corrections=corrections,
+            corrections=corrections, lettered=options.lettered,
         )
 
     if not (licensed and refusals.is_refused(face["name"])):

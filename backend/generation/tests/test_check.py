@@ -125,6 +125,67 @@ class OrderTests(SimpleTestCase):
         self.assertIn("rules_above_type", codes(CREATURE, panels))
 
 
+class TypePlateWidthTests(SimpleTestCase):
+    """bd mtg-atl. Phyrexian Obliterator, job 60265c75 and card 05 of the 2026-08-16 sign-off pack,
+    came back with the narrow strip painted as three riveted segments in a row. `detect` reported
+    the leftmost one, so the type line was set at roughly a third of its size in the left third of
+    the card with two empty segments beside it — and it graded SOUND, because `TYPE_SIZE` is a
+    fraction of the box HEIGHT and the segment is the right height. Only the width is wrong.
+
+    Every width below is measured off a stored detection, not invented.
+    """
+
+    def _at(self, width):
+        return {**SOUND, "type": (0.10, 0.60, 0.10 + width, 0.66)}
+
+    def test_the_segmented_bar_is_caught(self):
+        self.assertIn("type_too_narrow", codes(CREATURE, self._at(0.253)))
+
+    def test_every_other_stored_face_still_passes(self):
+        """0.562 is the next narrowest of the 45 (Elesh Norn, job 82157ad6); 0.804 is the median
+        and 0.911 the widest. The floor has to sit in the 2.2x gap above the one failure without
+        clipping the bottom of the healthy population."""
+        for width in (0.562, 0.716, 0.804, 0.911):
+            with self.subTest(width=width):
+                self.assertNotIn("type_too_narrow", codes(CREATURE, self._at(width)))
+
+    def test_a_card_with_no_type_plate_reports_only_the_missing_plate(self):
+        """`missing_type` already says this. A zero-width absence is not a narrow bar."""
+        panels = {k: v for k, v in SOUND.items() if k != "type"}
+        self.assertNotIn("type_too_narrow", codes(CREATURE, panels))
+
+
+class TitlePlateWidthTests(SimpleTestCase):
+    """bd mtg-6bb, the half of it a gate has to carry.
+
+    Sizing the name off the card (2026-08-17) fixed every plate that was the wrong HEIGHT. It
+    cannot fix a plate that is the wrong WIDTH, because the fit-to-width loop in `_title` then
+    steps the size back down and the loop is driven by how long the name is. Craterhoof Behemoth,
+    job bf4f16ac, came back on a title plate spanning 0.517 of the card and its name was cut by a
+    third — the only face in 58 the loop had to touch that hard.
+
+    Every width below is measured off a stored detection, not invented.
+    """
+
+    def _at(self, width):
+        return {**SOUND, "title": (0.05, 0.03, 0.05 + width, 0.11)}
+
+    def test_the_stunted_plate_is_caught(self):
+        self.assertIn("title_too_narrow", codes(CREATURE, self._at(0.517)))
+
+    def test_every_plate_that_printed_at_full_size_still_passes(self):
+        """0.681 is the narrowest plate in the archive that set its name at full size (Tree of
+        Tales, job 7a7b2dc0); 0.804 is the median and 0.880 the widest."""
+        for width in (0.681, 0.729, 0.804, 0.880):
+            with self.subTest(width=width):
+                self.assertNotIn("title_too_narrow", codes(CREATURE, self._at(width)))
+
+    def test_a_card_with_no_title_plate_reports_only_the_missing_plate(self):
+        """`missing_title` already says this. A zero-width absence is not a narrow plate."""
+        panels = {k: v for k, v in SOUND.items() if k != "title"}
+        self.assertNotIn("title_too_narrow", codes(CREATURE, panels))
+
+
 class OverflowTests(SimpleTestCase):
     def test_text_that_does_not_fit_is_a_fault(self):
         """compositor already computed this; nothing acted on it before."""
@@ -162,6 +223,20 @@ class BlankSurfaceTests(SimpleTestCase):
         repaint every one of them."""
         panels = {**SOUND, "rules": (0.10, 0.67, 0.90, 0.90)}
         self.assertNotIn("blank_surface", codes(CREATURE, panels))
+
+    def test_a_shield_on_a_card_with_no_pt_is_a_blank_surface(self):
+        """bd mtg-m8q. The `pt` box is Sol Ring's own, from job 40c627d1 — card 03 of the
+        2026-08-16 sign-off pack, which shipped with an empty metal shield at bottom-right and
+        graded clean on every gate. The detector found the shield; nothing asked whether an
+        artifact is entitled to one."""
+        panels = {**SOUND, "pt": (0.89044, 0.9186, 0.96216, 0.978)}
+        self.assertIn("blank_surface", codes(SPELL, panels))
+
+    def test_a_creature_keeps_its_shield(self):
+        """The mirror of `missing_pt`: the same box on a face that HAS power is the surface the
+        compositor is about to print into, and failing it would repaint 29 of the 45 stored
+        faces."""
+        self.assertNotIn("blank_surface", codes(CREATURE, SOUND))
 
 
 class PaintedMarkTests(SimpleTestCase):
@@ -412,3 +487,259 @@ class ColourIdentityTests(SimpleTestCase):
         problem = check.colour_identity(image, {"color_identity": ["U"]})
         self.assertIsNotNone(problem, "red+orange split below the bar and escaped the gate")
         self.assertIn("red", problem.detail)
+
+
+class ProofreadTests(SimpleTestCase):
+    """The text gate, back for the lettered mode (`CLAUDE.md`'s one surviving rule).
+
+    Every case here is a defect from the 25-card lettered batch, where the existing structural
+    gates passed 23 of 25 and were blind to all of them.
+    """
+
+    FACE = {
+        "name": "Thirsting Roots",
+        "type_line": "Sorcery",
+        "oracle_text": "Choose one —\n• Search your library for a basic land card, reveal it, put "
+        "it into your hand, then shuffle.\n• Proliferate.",
+        "power": None,
+        "loyalty": None,
+    }
+
+    def read(self, *patches, title=(0.1, 0.03, 0.9, 0.11)):
+        read = {"text": [{"where": where, "text": text} for where, text in patches]}
+        if title:
+            read["title"] = title
+        return read
+
+    def correct(self, **overrides):
+        return self.read(
+            ("title_plate", self.FACE["name"]),
+            ("type_strip", self.FACE["type_line"]),
+            ("rules_panel", self.FACE["oracle_text"].replace("\n", " ")),
+            **overrides,
+        )
+
+    def codes(self, face, read):
+        return [problem.code for problem in check.proofread(face, read)]
+
+    def test_a_card_that_says_what_scryfall_says_reports_nothing(self):
+        self.assertEqual(check.proofread(self.FACE, self.correct()), [])
+
+    def test_a_panel_transcribed_as_several_patches_still_matches(self):
+        """The model returns one entry per patch and a three-paragraph panel may come back as one
+        or as three. Grading on which would be grading the transcription, not the card."""
+        read = self.read(
+            ("title_plate", "Thirsting Roots"),
+            ("type_strip", "Sorcery"),
+            ("rules_panel", "Choose one —"),
+            ("rules_panel", "• Search your library for a basic land card, reveal it, put it into "
+             "your hand, then shuffle."),
+            ("rules_panel", "• Proliferate."),
+        )
+        self.assertEqual(check.proofread(self.FACE, read), [])
+
+    def test_punctuation_the_transcription_cannot_resolve_is_not_graded(self):
+        """An em dash and a hyphen are two strokes of ink at body size. Grading the distinction
+        buys false repaints and no correctness."""
+        read = self.correct()
+        read["text"][2]["text"] = read["text"][2]["text"].replace("—", "-").replace("•", "-")
+        self.assertEqual(check.proofread(self.FACE, read), [])
+
+    def test_a_symbol_is_graded_the_same_with_or_without_braces(self):
+        """`{T}: Add {C}{C}` is drawn as a tap symbol and two diamonds, and a transcription may or
+        may not put the braces back."""
+        sol = {**self.FACE, "name": "Sol Ring", "type_line": "Artifact",
+               "oracle_text": "{T}: Add {C}{C}."}
+        read = self.read(("title_plate", "Sol Ring"), ("type_strip", "Artifact"),
+                         ("rules_panel", "T: Add CC."))
+        self.assertEqual(check.proofread(sol, read), [])
+
+    def test_a_word_the_model_invented_is_caught(self):
+        read = self.correct()
+        read["text"][1]["text"] = "Instant"
+        self.assertIn("text_wrong", self.codes(self.FACE, read))
+
+    def test_rules_text_obscured_by_the_artwork_is_caught(self):
+        """Palantír of Orthanc, card 20: a chain crossed the MIDDLE of the rules panel and hid
+        four words. Every structural gate passed it."""
+        read = self.correct()
+        read["text"][2]["text"] = "Choose one — • Search your [?] for a [?] land card, reveal it."
+        self.assertIn("text_wrong", self.codes(self.FACE, read))
+
+    def test_a_field_left_unprinted_is_caught(self):
+        read = self.read(("title_plate", "Thirsting Roots"), ("type_strip", "Sorcery"))
+        self.assertIn("text_missing", self.codes(self.FACE, read))
+
+    def test_runes_flanking_a_real_line_are_caught(self):
+        """Lim-Dûl's Vault, card 21: runes either side of `Instant` on the type strip. The brief
+        has banned them since the first Creative Full card and they still arrive."""
+        read = self.correct()
+        read["text"][1]["text"] = "ᛗᚫᛉ Sorcery ᚠᚱᚦ"
+        self.assertIn("text_wrong", self.codes(self.FACE, read))
+
+    def test_a_set_symbol_or_artist_credit_anywhere_else_is_caught(self):
+        read = self.correct()
+        read["text"].append({"where": "other", "text": "Illus. A. Painter 042/280"})
+        self.assertIn("text_extra", self.codes(self.FACE, read))
+
+    def test_script_in_the_artwork_is_not_graded(self):
+        """Delver of Secrets came back twice with arcane script in its scene. That is
+        illustration, and failing it bought a repaint that changed nothing — the same evidence
+        that narrowed `_offending_marks`."""
+        read = self.correct()
+        read["text"].append({"where": "artwork", "text": "ᚦᚱ ᛉᚫ"})
+        self.assertEqual(check.proofread(self.FACE, read), [])
+
+    def test_a_field_the_card_does_not_have_but_the_model_lettered_is_caught(self):
+        """A sorcery with a power/toughness written into a tab. bd mtg-m8q's defect, one layer
+        further on: the surface got painted AND filled in."""
+        read = self.correct()
+        read["text"].append({"where": "tab", "text": "2/2"})
+        self.assertIn("text_extra", self.codes(self.FACE, read))
+
+    def test_a_creature_is_graded_on_its_power_and_toughness(self):
+        goyf = {**self.FACE, "name": "Tarmogoyf", "type_line": "Creature — Lhurgoyf",
+                "oracle_text": "Tarmogoyf's power is equal to the number of card types among "
+                "cards in all graveyards and its toughness is equal to that number plus 1.",
+                "power": "*", "toughness": "1+*"}
+        read = self.read(("title_plate", goyf["name"]), ("type_strip", goyf["type_line"]),
+                         ("rules_panel", goyf["oracle_text"]), ("tab", "*/1+*"))
+        self.assertEqual(check.proofread(goyf, read), [])
+        read["text"][3]["text"] = "2/3"
+        self.assertIn("text_wrong", self.codes(goyf, read))
+
+    def test_a_planeswalker_is_graded_on_its_starting_loyalty(self):
+        jace = {**self.FACE, "name": "Jace, the Mind Sculptor",
+                "type_line": "Legendary Planeswalker — Jace", "oracle_text": "+2: Look.",
+                "loyalty": 3}
+        read = self.read(("title_plate", jace["name"]), ("type_strip", jace["type_line"]),
+                         ("rules_panel", "+2: Look."), ("tab", "3"))
+        self.assertEqual(check.proofread(jace, read), [])
+
+    def test_no_title_plate_means_the_cost_has_nowhere_to_go(self):
+        """The one field we still composite. Without the plate the card ships with no cost at
+        all, which is a structural fault before it is a text one."""
+        self.assertIn("missing_title", self.codes(self.FACE, self.correct(title=None)))
+
+
+class CostCollisionTests(SimpleTestCase):
+    """The cost stamped over the card's own name.
+
+    MEASURED on the first live lettered run, 2026-08-17: Progenitus had a dragon crossing the right
+    half of its title plate, `read_back` reported the plate as the clear left half only (x 0.09 to
+    0.56), and ten pips right-aligned to 0.56 landed on the word "Progenitus". No text gate can see
+    it — the read-back transcribes the card before the cost exists.
+    """
+
+    PROGENITUS = {"name": "Progenitus", "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}"}
+    PLATE = (0.06, 0.05, 0.94, 0.15)
+
+    def test_a_plate_with_room_for_both_reports_nothing(self):
+        read = {"title": self.PLATE, "name": (0.10, 0.07, 0.35, 0.13)}
+        self.assertIsNone(check.cost_collides(self.PROGENITUS, read))
+
+    def test_the_measured_failure_is_caught(self):
+        read = {"title": (0.09, 0.06, 0.56, 0.13), "name": (0.10, 0.07, 0.42, 0.13)}
+        self.assertEqual(check.cost_collides(self.PROGENITUS, read).code, "cost_no_room")
+
+    def test_a_long_name_on_a_full_plate_is_caught_too(self):
+        """The other direction: the plate is right, the model just lettered too far across."""
+        read = {"title": self.PLATE, "name": (0.10, 0.07, 0.90, 0.13)}
+        self.assertEqual(check.cost_collides(self.PROGENITUS, read).code, "cost_no_room")
+
+    def test_a_one_pip_cost_needs_far_less_room_than_a_ten_pip_one(self):
+        read = {"title": self.PLATE, "name": (0.10, 0.07, 0.70, 0.13)}
+        self.assertIsNone(check.cost_collides({"name": "Forest", "mana_cost": "{G}"}, read))
+        self.assertEqual(check.cost_collides(self.PROGENITUS, read).code, "cost_no_room")
+
+    def test_a_card_with_no_cost_cannot_collide(self):
+        read = {"title": self.PLATE, "name": (0.10, 0.07, 0.93, 0.13)}
+        self.assertIsNone(check.cost_collides({"name": "Forest", "mana_cost": ""}, read))
+
+    def test_a_name_box_the_read_back_did_not_return_is_not_guessed_at(self):
+        """Same rule as `panels._usable`: an absent box means the reader was unsure, and inventing
+        one here would fail good cards on arithmetic nobody measured."""
+        self.assertIsNone(check.cost_collides(self.PROGENITUS, {"title": self.PLATE}))
+
+
+class ObstructionTests(SimpleTestCase):
+    """Something painted across the panel the text has to go on.
+
+    `contrast` cannot see this: it takes the panel's MEAN, and the vines that put "you control." on
+    top of a vine on Craterhoof moved its mean by 5%. Obstruction is local.
+    """
+
+    PANEL = {"rules": [(0.10, 0.65, 0.90, 0.90)]}
+
+    def blank(self, bars=0, thickness=0.01):
+        """A pale panel on a dark card, with `bars` painted across it."""
+        image = Image.new("RGBA", (896, 1200), (24, 26, 30, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), fill=(238, 222, 188, 255))
+        for index in range(bars):
+            top = (0.68 + index * 0.05) * 1200
+            draw.rectangle((0.10 * 896, top, 0.90 * 896, top + thickness * 1200), fill=(48, 62, 34, 255))
+        return image
+
+    def test_a_bare_panel_passes(self):
+        self.assertIsNone(check.obstructed(self.blank(), self.PANEL))
+
+    def test_a_panel_painted_across_is_refused(self):
+        problem = check.obstructed(self.blank(bars=4), self.PANEL)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "panel_obstructed")
+
+    def test_the_detail_tells_the_repaint_what_to_do(self):
+        """The retry hands the grader's own wording back to the model, so it has to name the fix and
+        not just the fault (bd mtg-x6v)."""
+        problem = check.obstructed(self.blank(bars=4), self.PANEL)
+        self.assertIn("OUTSIDE", problem.detail)
+
+    def test_a_dark_slab_is_not_graded(self):
+        """`compositor.foreground_mask` is for light surfaces only — on a dark slab it returns the
+        slab itself, which would fail every card that has one."""
+        image = Image.new("RGBA", (896, 1200), (24, 26, 30, 255))
+        ImageDraw.Draw(image).rectangle(
+            (0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), fill=(38, 42, 58, 255)
+        )
+        self.assertIsNone(check.obstructed(image, self.PANEL))
+
+    def test_the_panel_rim_is_not_obstruction(self):
+        """Every panel has a raised border, and it is inside the box the detector reports. Counting
+        it would fail every card ever painted."""
+        image = Image.new("RGBA", (896, 1200), (24, 26, 30, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), fill=(238, 222, 188, 255))
+        draw.rectangle(
+            (0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), outline=(52, 40, 26, 255), width=6
+        )
+        self.assertIsNone(check.obstructed(image, self.PANEL))
+
+    def test_a_missing_panel_is_left_to_its_own_code(self):
+        self.assertIsNone(check.obstructed(self.blank(), {}))
+
+
+class HonestBoxTests(SimpleTestCase):
+    """`panels.detect` must report the whole flat face, even where something crosses it.
+
+    MEASURED 2026-08-17 on a live Craterhoof. The prompt used to say "where something from the
+    artwork crosses in FRONT of a surface, keep that out of the box", and the detector obeyed:
+    it reported the rules panel as x0.103-0.570 where the painted pale face runs 0.106-0.896, so
+    the text was set into the left 47% of a panel that is clean out to 0.68 on every row.
+
+    Worse, it made `obstructed` blind by construction — the gate only measures inside the reported
+    box, so a detector that clips the box to dodge a branch hides the exact fault the gate exists
+    to find. On that card the gate read "passed" at the clipped box and 13.0% at the honest one.
+    """
+
+    def test_the_gate_only_sees_what_the_box_includes(self):
+        """The reason the detector prompt had to change, held as a test so it cannot drift back."""
+        image = Image.new("RGBA", (896, 1200), (24, 26, 30, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), fill=(238, 222, 188, 255))
+        # A branch across the panel's right third, exactly the Craterhoof case.
+        draw.rectangle((0.60 * 896, 0.65 * 1200, 0.72 * 896, 0.90 * 1200), fill=(48, 40, 30, 255))
+        clipped = {"rules": [(0.10, 0.65, 0.57, 0.90)]}
+        honest = {"rules": [(0.10, 0.65, 0.90, 0.90)]}
+        self.assertIsNone(check.obstructed(image, clipped), "a clipped box hides the branch")
+        self.assertIsNotNone(check.obstructed(image, honest), "an honest box has to see it")

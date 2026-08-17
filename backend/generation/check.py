@@ -1,11 +1,15 @@
 """Is this card structurally sound, or should the art be regenerated?
 
-WHAT THIS IS NOT. `HANDOVER-2026-08-09.md` describes a `check.py` that grades the card's printed
-TEXT field by field against Scryfall, because at that point the model was lettering the card
-itself and a fabricated subtype in the right font was invisible. That mode is gone: we composite
-Scryfall's own text (`cards.compositor`), so the wording is correct by construction and there is
-nothing to proofread. What can still be wrong is the FURNITURE the model painted, and that is
-what this grades.
+WHAT THIS IS NOT — for the COMPOSITED mode. `HANDOVER-2026-08-09.md` describes a `check.py` that
+grades the card's printed TEXT field by field against Scryfall, because at that point the model
+was lettering the card itself and a fabricated subtype in the right font was invisible. On the
+composited path that is still unnecessary: we set Scryfall's own text (`cards.compositor`), so the
+wording is correct by construction. What can still be wrong there is the FURNITURE the model
+painted, and that is what `inspect`, `contrast`, `matted` and `colour_identity` grade.
+
+`proofread` IS that text grader, brought back for the lettered mode where the model letters every
+field but the cost. Nothing else in this module changed: the two modes differ in which guarantee
+they buy by construction and which one has to be measured.
 
 Every check here fired on a real card during the 2026-08-10/11 batches, and each one is something
 a human eye caught only because someone was looking:
@@ -23,7 +27,12 @@ automatic retry is the right shape, and a second would mostly burn credits on ca
 going to keep failing.
 """
 
+import unicodedata
 from typing import NamedTuple
+
+from PIL import ImageStat
+
+from cards import compositor
 
 
 class Problem(NamedTuple):
@@ -37,6 +46,50 @@ class Problem(NamedTuple):
 # reference-site generations of one card put it at the top on 10 of 10 while everything else about
 # the layout moved, so the order is the one thing safe to assert.
 TITLE_MAX_Y = 0.25
+
+TYPE_MIN_WIDTH = 0.45
+"""Share of the card the type plate must span before the type line can be set on it.
+
+MEASURED 2026-08-17 across all 45 composited faces the project has stored. Phyrexian Obliterator,
+job 60265c75 and card 05 of the sign-off pack, came back with the narrow strip painted as THREE
+riveted segments in a row instead of one bar. `panels.detect` reported the leftmost segment, so
+`Creature - Phyrexian Horror` was set at roughly a third of its proper size, tucked into the left
+third, with two empty metal segments beside it. It graded SOUND on every gate: `TYPE_SIZE` is a
+fraction of the detected box HEIGHT and the segment is the right height — it is the WIDTH that is
+wrong, and nothing read the type plate's width against the card.
+
+    0.253  Phyrexian Obliterator  60265c75   <- the segmented bar
+    0.562  Elesh Norn             82157ad6
+    0.716  Phyrexian Obliterator  50bc4beb
+    0.736 ... 0.804 median ... 0.911         everything else
+
+Two populations with a 2.2x gap and one member below it, so the floor sits in the gap rather than
+at a number chosen for looking round. This is a GATE on the symptom, not the cure: the brief
+already forbids splitting a surface into a row of smaller ones, twice over, and the model did it
+anyway (bd mtg-atl). Reporting a row of segments as `spare` at detection time is the fix that
+fires on the cause; this is what stops one shipping in the meantime.
+"""
+
+TITLE_MIN_WIDTH = 0.60
+"""Share of the card the title plate must span before the name can be set on it.
+
+The same gate as `TYPE_MIN_WIDTH` on the plate above it, and it exists for the same reason one
+step further on. Sizing the name off the CARD instead of off the plate's height (2026-08-17, bd
+mtg-6bb) took the spread out of every card whose name fits its plate — Sol Ring 1.48x -> 1.00x,
+Terror of the Peaks 1.24x -> 1.00x over repeat generations of the identical string. What it could
+not touch is a name too long for the plate it was given, because the fit-to-width loop then steps
+the size back down, and the plate's WIDTH is as stochastic as its height was.
+
+MEASURED 2026-08-17 over all 58 stored faces that kept their title box:
+
+    0.517  Craterhoof Behemoth  bf4f16ac   <- name crushed to 0.0267 of card height
+    0.681  Tree of Tales        7a7b2dc0      printed at full size
+    0.729 ... 0.804 median ... 0.880          everything else, all at full size
+
+One card, one plate, and it is the only face in 58 the loop had to cut by a third. The floor sits
+between it and the narrowest plate that printed correctly. A card that trips it is one the model
+painted a stunted name plate on, which is a repaint — not a name set small enough to fit it.
+"""
 
 
 def _strips(rules):
@@ -95,6 +148,25 @@ def inspect(face, panels, overflowed):
     if type_panel and top_rule is not None and top_rule < type_panel[1]:
         problems.append(Problem("rules_above_type", "the rules panel sits above the type plate"))
 
+    if title and title[2] - title[0] < TITLE_MIN_WIDTH:
+        problems.append(
+            Problem(
+                "title_too_narrow",
+                f"the name plate is only {title[2] - title[0]:.0%} of the card wide — the name has "
+                "to be set small to fit it, so this card's title would not match the rest of a deck",
+            )
+        )
+
+    if type_panel and type_panel[2] - type_panel[0] < TYPE_MIN_WIDTH:
+        problems.append(
+            Problem(
+                "type_too_narrow",
+                f"the type plate is only {type_panel[2] - type_panel[0]:.0%} of the card wide — "
+                "the strip was painted as a row of segments, so the type line is set small in one "
+                "of them with the rest left bare",
+            )
+        )
+
     if overflowed:
         problems.append(
             Problem(
@@ -112,15 +184,28 @@ def inspect(face, panels, overflowed):
     # compositor prints into only as many as the card has paragraphs (`compositor._rules`, which
     # slices `boxes[: len(paragraphs)]`) — so on that path the surplus is silently left bare. Both
     # are the same fault to a customer, so both carry the same code.
+    #
+    # There is a THIRD way in, and it is the one that shipped. MEASURED 2026-08-17 over all 75
+    # stored faces: Sol Ring, card 03 of the sign-off pack, has an empty metal SHIELD painted at
+    # bottom-right. It is an artifact, so the compositor correctly prints nothing into it and the
+    # shield goes out blank. `detect` did not miss it — job 40c627d1 reports a `pt` box on a face
+    # with no power, and `problems` came back empty. 2 of 2: both Creative Full runs of the only
+    # non-creature ever composited through the UI did this, and both graded clean.
+    #
+    # Nothing fired because a `pt` box is never a candidate to be spare — the detector's job is to
+    # FIND the shield, not to ask whether the card is entitled to one. That entitlement is free:
+    # the face already carries `power`, which `missing_pt` above reads for the mirror case.
     blank = len(panels.get("spare") or [])
+    if face.get("power") is None and panels.get("pt"):
+        blank += 1
     paragraphs = len([p for p in (face.get("oracle_text") or "").split("\n") if p.strip()])
     blank += max(0, len(strips) - max(1, paragraphs))
     if blank:
         problems.append(
             Problem(
                 "blank_surface",
-                f"{blank} painted surface(s) more than this card has text for — an empty second "
-                "bar reads as a printing error, which is how the client reported it",
+                f"{blank} painted surface(s) more than this card has anything to print in — an "
+                "empty second bar reads as a printing error, which is how the client reported it",
             )
         )
 
@@ -151,6 +236,186 @@ def inspect(face, panels, overflowed):
             )
         )
     return problems
+
+
+_PUNCTUATION = {
+    "‘": "'", "’": "'", "“": '"', "”": '"',
+    "–": "-", "—": "-", "−": "-", "‐": "-", "‑": "-",
+    "•": "-", " ": " ",
+}
+"""Differences between what Scryfall stores and what a transcription plausibly returns.
+
+Each entry is a distinction the read-back CANNOT reliably make — an em dash and a hyphen are two
+strokes of ink at body-text size — so grading on it buys false repaints and no correctness. Every
+distinction that survives normalisation is one a reader would notice: a wrong word, a missing
+clause, a fabricated subtype.
+"""
+
+
+def _normalised(text):
+    """A printed string reduced to what is worth comparing.
+
+    Braces go because the card draws `{T}` as a tap symbol and a transcription may or may not put
+    them back; case goes because a card lettered in small caps is a styling choice and not a text
+    error. Whitespace collapses so that a panel transcribed as one patch and the same panel
+    transcribed as three both compare equal to Scryfall's newline-separated paragraphs.
+    """
+    text = unicodedata.normalize("NFKC", text or "")
+    for printed, stored in _PUNCTUATION.items():
+        text = text.replace(printed, stored)
+    return " ".join(text.replace("{", "").replace("}", "").split()).casefold()
+
+
+def _expected(face):
+    """(surface, what it must say, what to call it) for every surface the model lettered.
+
+    The mana cost is absent on purpose — it is stamped by `compositor._cost` from our own vendored
+    artwork and was never the model's to get wrong. See `prompts._lettering_block`.
+    """
+    tab = ""
+    if face.get("power") is not None:
+        tab = f"{face['power']}/{face['toughness']}"
+    elif face.get("loyalty") is not None:
+        tab = str(face["loyalty"])
+    return (
+        ("title_plate", face.get("name") or "", "the card's name"),
+        ("type_strip", face.get("type_line") or "", "the type line"),
+        ("rules_panel", face.get("oracle_text") or "", "the rules text"),
+        ("tab", tab, "the power/toughness" if face.get("power") is not None else "the loyalty"),
+    )
+
+
+def _quote(text, limit=90):
+    return repr(text if len(text) <= limit else text[: limit - 1] + "…")
+
+
+def proofread(face, read):
+    """Does this lettered card say what Scryfall says? Worst first, empty means it does.
+
+    THE RULE THIS EXISTS FOR is the one `CLAUDE.md` says survived everything else: a card whose
+    printed text differs from Scryfall must never ship silently. Compositing used to guarantee it
+    by construction, which is why the module docstring above says there is nothing to proofread.
+    In the lettered mode there is: the model sets every field but the cost, and a fabricated
+    subtype in the right font is invisible to every structural gate here. Measured over 25
+    generations, those gates passed 23 and caught none of the text defects in the batch.
+
+    `read` is `panels.read_back`'s output. NOTHING in this comparison happens in the model: it
+    transcribes blind and Python does every alignment, because a gate handed the answer grades the
+    hint rather than the card.
+
+    Writing painted into the ARTWORK is not graded, on the same evidence `_offending_marks` was
+    narrowed on: Delver of Secrets came back twice with arcane script in its scene, which is
+    illustration and not card text. What is graded is every surface a reader takes for card text.
+    """
+    problems = []
+    patches = read.get("text") or []
+    surfaces = {}
+    for patch in patches:
+        surfaces.setdefault(patch.get("where") or "other", []).append(patch.get("text") or "")
+
+    # No title plate is a structural fault before it is a text one: it is where the mana cost gets
+    # stamped, so the card ships with no cost at all rather than a wrong one.
+    if not read.get("title"):
+        problems.append(
+            Problem(
+                "missing_title",
+                "no plate was painted across the top of the card — the card's mana cost has "
+                "nowhere to be stamped and would ship missing entirely",
+            )
+        )
+
+    graded = set()
+    for where, expected, what in _expected(face):
+        graded.add(where)
+        printed = " ".join(surfaces.get(where) or [])
+        if not expected:
+            # A surface the card has no text for, carrying text anyway: a sorcery with a P/T tab
+            # lettered, a vanilla creature with a rules panel filled in. Invented, by definition.
+            if printed.strip():
+                problems.append(
+                    Problem(
+                        "text_extra",
+                        f"the {where.replace('_', ' ')} carries {_quote(printed)}, and this card "
+                        "has no such field — it was invented. Leave that surface bare",
+                    )
+                )
+            continue
+        if not printed.strip():
+            problems.append(
+                Problem(
+                    "text_missing",
+                    f"{what} is not printed anywhere on the card. It must read {_quote(expected)}",
+                )
+            )
+        elif _normalised(printed) != _normalised(expected):
+            problems.append(
+                Problem(
+                    "text_wrong",
+                    f"{what} reads {_quote(printed)} and must read {_quote(expected)} exactly, "
+                    "character for character, with nothing added, dropped or obscured",
+                )
+            )
+
+    # Everything left: writing on a surface no field belongs on, or off the surfaces entirely.
+    # Runes flanking a type line and a set symbol on a card with no set both arrive here, and both
+    # are what the client reported. `artwork` is excluded above, in the docstring's terms.
+    loose = [
+        text
+        for where, texts in surfaces.items()
+        if where not in graded and where != "artwork"
+        for text in texts
+        if text.strip()
+    ]
+    if loose:
+        problems.append(
+            Problem(
+                "text_extra",
+                f"{len(loose)} patch(es) of writing that are not this card's text: "
+                + "; ".join(_quote(text, 40) for text in loose[:4])
+                + ". A proxy has no set symbol, no collector number and no artist credit, and "
+                "carved runes beside a real line of text read as a printing error",
+            )
+        )
+    return problems
+
+
+COST_GAP = 0.01
+"""Clear space between the name's last letter and the cost's first pip, as a share of the card.
+
+Below this they read as one run of marks rather than two fields. The reference site's own cards
+sit at 0.02-0.05; this is the floor, not the target — the target is stated to the model by
+`prompts._cost_room` and this only catches the cards that ignored it.
+"""
+
+
+def cost_collides(face, read):
+    """The mana cost about to be stamped over the card's own name, or None.
+
+    MEASURED on the first live lettered run, 2026-08-17. `Progenitus` had a dragon's head crossing
+    the right half of its title plate; `read_back` reported the plate as the unobstructed left half
+    only, x 0.09-0.56; the ten pips were right-aligned to 0.56 and landed squarely on the word
+    "Progenitus". The read-back had already passed the card — it transcribed the name before the
+    pips existed — so no text gate could ever see this. It is the worst defect this mode can ship
+    and it arrived on the first card, which is why it is gated rather than prompted away.
+
+    The prompt was fixed too (`panels.READ_PROMPT` now asks for the plate's full extent, crossings
+    included). This is the guarantee under it: a plate box that is wrong in the other direction, or
+    a name lettered further right than the brief asked, arrives here instead of at a customer.
+    """
+    title, name = read.get("title"), read.get("name")
+    if not title or not name or not (face.get("mana_cost") or "").strip():
+        return None
+    # Both are (x0, y0, x1, y1). The cost is right-aligned inside the plate, so its left edge is
+    # the plate's right end less what the pips take.
+    starts_at = title[2] - compositor.cost_width(face, title)
+    if starts_at >= name[2] + COST_GAP:
+        return None
+    return Problem(
+        "cost_no_room",
+        f"the name runs to {name[2]:.2f} across the card and the mana cost has to start at "
+        f"{starts_at:.2f} to fit the plate — the cost would be stamped on top of the name. Paint "
+        "the name shorter and leave the right-hand end of the top plate bare, as the brief asks",
+    )
 
 
 NEAR = 0.015
@@ -277,6 +542,88 @@ def contrast(card, panels, ink=20):
     )
 
 
+OBSTRUCTION_MAX = 0.05
+"""Share of the rules panel's interior that may be painted OVER before the art is repainted.
+
+MEASURED 2026-08-17 on six blanks, against the share of each card's glyph pixels that actually landed
+on painted foreground. THE FIRST THREE ARE WHAT THIS WAS CALIBRATED ON; THE SECOND THREE ARE WHY IT
+IS KNOWN TO BE A PROXY AND NOT THE MEASUREMENT ANYONE WANTS:
+
+    Sol Ring     (original)     0.011 obstructed    0.0% of its text colliding
+    Craterhoof   (original)     0.091               8.4%     vines across the scroll
+    Terror       (original)     0.186               9.6%     a branch through the slab
+    Sol Ring     (art deco)     0.032               0.0%
+    Craterhoof   (pixel art)    0.072               0.0%     paint at the corners and torn edge
+    Lightning B. (comic book)   0.112               0.0%     paint at the corners and torn edge
+
+0.091 ruins a card's text and 0.112 leaves it untouched, so this statistic DOES NOT ORDER the defect
+it is named for. What separates them is WHERE the paint sits: across the middle on the originals,
+around the rim and corners on the new three. At 0.05 it therefore over-fires — it refused two of the
+three cards in the 2026-08-17 style run that were visually fine.
+
+MEASURING THE TEXT BAND INSTEAD WAS TRIED THE SAME DAY AND REVERTED. Laying the block out through
+`textlayout.fit_across` inside this module reproduces neither the boxes `cards.compositor._rules`
+uses (`printable_face`-adjusted, not raw) nor its `_assign` split across strips nor its shield
+excludes, and the band came out wrong enough to PASS the original Craterhoof at 8.4% collision — a
+false negative, which is worse than the over-firing it was meant to cure. Doing it properly means
+measuring after compositing, where the glyph mask is real, and that needs `compose`'s return plumbed
+through ~20 call sites. Until then this stays a deliberately blunt instrument that costs a repaint
+when it is wrong rather than shipping a card with words on a branch.
+
+`contrast` sees none of it either: it takes the panel's MEAN, and Craterhoof's scroll means 211 with
+the vines across it and 222 without — a 5% move for the defect that put "you control." on top of a
+vine. Obstruction is local, and a mean is the one statistic that hides it.
+"""
+
+
+def obstructed(blank, panels, face=None):
+    """Something painted across the words the rules panel has to carry, or None.
+
+    Graded on the BLANK and not the composited card, for the same reason `overflowed` is: it is a
+    fault in what the model painted, and the remedy is to repaint the art rather than anything the
+    compositor can do. `cards.compositor._occlude` makes the crossing pass in front of the text
+    instead of behind it, which is what stops a mild one reading as a sticker — this is what refuses
+    the ones too heavy for that to save.
+
+    `face` is accepted and unused: the text-band measurement it was added for is reverted above, and
+    the parameter is kept so the pipeline call site does not have to churn again when that is
+    finished properly.
+    """
+    strips = _strips(panels.get("rules"))
+    if not strips:
+        return None  # `missing_rules` already covers this.
+    width, height = blank.size
+    worst = None
+    for strip in strips:
+        box = (
+            int(strip[0] * width), int(strip[1] * height),
+            int(strip[2] * width), int(strip[3] * height),
+        )
+        surface = blank.crop(box)
+        if surface.width < 8 or surface.height < 8:
+            continue
+        if compositor.surface_is_dark(surface, (0, 0) + surface.size):
+            continue  # `foreground_mask` is for light surfaces only; see its docstring.
+        inset_x = round(surface.width * compositor.RULES_PAD)
+        inset_y = round(surface.height * compositor.RULES_PAD)
+        region = surface.crop(
+            (inset_x, inset_y, surface.width - inset_x, surface.height - inset_y)
+        )
+        if region.width < 8 or region.height < 8:
+            continue
+        mask = compositor.foreground_mask(region)
+        mass = ImageStat.Stat(mask).mean[0] / 255
+        worst = mass if worst is None else max(worst, mass)
+    if worst is None or worst <= OBSTRUCTION_MAX:
+        return None
+    return Problem(
+        "panel_obstructed",
+        f"{worst:.1%} of the rules panel is painted over — the text has to share the surface with "
+        "the scene, so keep the vines, branches and rigging OUTSIDE the panel's rim and leave its "
+        "face completely bare",
+    )
+
+
 def matted(card):
     """A mat the trim could not cut, or None.
 
@@ -292,8 +639,8 @@ def matted(card):
         return None
     return Problem(
         "matted",
-        f"{share:.0%} of the card's edge is one flat light colour — a border on a card asked to "
-        "run full bleed",
+        f"{share:.0%} of the card's edge is one flat colour — a border on a card asked to run "
+        "full bleed",
     )
 
 
