@@ -89,6 +89,12 @@ class GenerateTests(TestCase):
             "include_flavor_text": True,
             "use_original_art_reference": False,
             "borderless": True,
+            # OURS, not theirs, and deliberately not accepted from the body: the lettered mode has
+            # 30 generations behind it against the composited path's 82 and is not a toggle to
+            # hand a customer yet. It is recorded anyway, because `job.options` is the only record
+            # of what produced a stored card and a post-mortem that cannot tell the two modes
+            # apart is worthless.
+            "lettered": False,
         })
 
     def test_custom_style_free_text_folds_into_the_style_field(self):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from generation import gemini, pipeline
+from generation import pipeline
 
 
 def _slug(name):
@@ -57,9 +57,17 @@ class Command(BaseCommand):
             if dry_run:
                 continue
 
-            png = gemini.generate(prompt, reference)
+            # Through `pipeline.art`, not `gemini.generate` — so the CLI gets the trim, the two
+            # gates and the repaint the mode gained on 2026-08-19 (bd mtg-l4x). Writing the model's
+            # bytes here was the same two defects the web path had: an untrimmed mat shipped
+            # unreported, and JPEG under a `.png` name (bd mtg-ctu), which `result.card` saved
+            # through PIL fixes for free. The brief above is still printed from `art_brief` so
+            # `--dry-run` costs nothing.
+            result = pipeline.art(face, options, note=note)
             out.mkdir(parents=True, exist_ok=True)
             suffix = "" if face["face_position"] == "SINGLE" else f"-{face['face_position'].lower()}"
             path = out / f"{_slug(face['name'])}{suffix}.png"
-            path.write_bytes(png)
-            self.stdout.write(self.style.SUCCESS(f"{path} ({len(png):,} B)"))
+            result.card.save(path)
+            for problem in result.problems:
+                self.stdout.write(self.style.ERROR(f"UNSOUND {problem.code}: {problem.detail}"))
+            self.stdout.write(self.style.SUCCESS(f"{path} ({path.stat().st_size:,} B)"))

@@ -5,7 +5,6 @@
 # user's deck is in flight — swap in Celery/RQ behind `start()` when that day comes.
 """
 
-import io
 import os
 import re
 import threading
@@ -14,7 +13,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from django.conf import settings
 from django.db import connection
-from PIL import Image
 
 from generation import pipeline
 from generation.models import Job
@@ -42,19 +40,6 @@ _results = threading.Lock()
 
 def _slug(name):
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-
-def _write_png(path, data):
-    """Model bytes under a `.png` name, re-encoded so the file is what the name claims.
-
-    MEASURED on the first Art Only run through the UI (job ac1c537c, 2026-08-15): Gemini returns
-    **JPEG**, and writing it straight through produced a `lightning-bolt.png` that `file` calls
-    JPEG, served as `Content-Type: image/png`. Browsers sniff and render it, so nothing looked
-    wrong — but "Download full resolution" is the Art Only deliverable, and handing a print shop a
-    mislabelled file is a bug found at the printer. Creative Full never had this: it saves through
-    PIL, which writes the format the extension names.
-    """
-    Image.open(io.BytesIO(data)).save(path)
 
 
 def start(job):
@@ -125,13 +110,18 @@ def _face(job_id, mode, options, directory, entry, face):
     log, started = [], time.monotonic()
     try:
         name = _file_stem(face)
-        if mode == "ART_ONLY":
-            _write_png(directory / f"{name}.png", pipeline.art(face, options, note=log.append))
-            problems, panels = [], None  # Art Only paints no furniture, so there is none to detect
-        else:
-            result = pipeline.creative_full(face, options, note=log.append)
-            result.card.convert("RGB").save(directory / f"{name}.png")
-            problems = [{"code": p.code, "detail": p.detail} for p in result.problems]
+        # Both modes return a `pipeline.Result` and both are graded (bd mtg-l4x). Art Only used to
+        # branch away here into `_write_png(pipeline.art(...))` with `problems = []` hard-coded —
+        # not "no faults found" but "never looked", which is how a fully bordered card shipped
+        # marked ok. `Result.detected` is empty for Art Only because it paints no furniture; that
+        # is the only difference left.
+        result = (pipeline.art if mode == "ART_ONLY" else pipeline.creative_full)(
+            face, options, note=log.append
+        )
+        result.card.convert("RGB").save(directory / f"{name}.png")
+        problems = [{"code": p.code, "detail": p.detail} for p in result.problems]
+        panels = result.detected or None
+        if mode != "ART_ONLY":
             # KEEP THE EVIDENCE ON A CARD THAT CAME BACK WRONG (bd mtg-57t). The blank and the
             # boxes are already in hand — `pipeline` returns both — and throwing them away is what
             # made every post-mortem cost a fresh paid generation. On 2026-08-15 that stopped a
@@ -142,8 +132,7 @@ def _face(job_id, mode, options, directory, entry, face):
             # Only when it is unsound, because the blank is ~9MB a face and a card that graded
             # clean has nothing to investigate. `panels` is small enough to keep either way, and
             # it is the half that actually answers the question.
-            panels = result.detected
-            if problems and result.blank:
+            if (problems or settings.KEEP_BLANKS) and result.blank:
                 # Raw, unlike the Art Only deliverable: the blank is evidence we read with PIL,
                 # which sniffs the content and ignores the extension. Re-encoding it would put a
                 # decode between a faulty card and its own post-mortem — the one moment the bytes
@@ -162,7 +151,7 @@ def _face(job_id, mode, options, directory, entry, face):
             "panels": panels,
             "blank": (
                 f"{settings.MEDIA_URL}generated/{job_id}/{name}-blank.png"
-                if problems and mode != "ART_ONLY"
+                if (problems or settings.KEEP_BLANKS) and mode != "ART_ONLY"
                 else None
             ),
         })

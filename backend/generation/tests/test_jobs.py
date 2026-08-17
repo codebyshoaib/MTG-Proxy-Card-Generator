@@ -96,17 +96,41 @@ class RunTests(TestCase):
         written `lightning-bolt.png` as JPEG, and it was served as `image/png`. Browsers sniff
         past it, which is why this survived — the download is the deliverable, so the format has
         to match the name.
-        """
-        jpeg = io.BytesIO()
-        Image.new("RGB", (8, 11), "red").save(jpeg, format="JPEG")
 
-        with mock.patch.object(jobs.pipeline, "art", return_value=jpeg.getvalue()) as art:
+        `pipeline.art` now hands back the decoded image rather than the model's bytes (bd
+        mtg-l4x), so the save below is what makes the format match — the same line Creative Full
+        has always used.
+        """
+        with mock.patch.object(
+            jobs.pipeline, "art",
+            return_value=jobs.pipeline.Result(Image.new("RGB", (8, 11), "red"), [], {}, None),
+        ) as art:
             jobs.run(_job("ART_ONLY").pk)
 
         job = Job.objects.get()
         self.assertEqual(art.call_count, 2)
         written = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt.png"
         self.assertEqual(Image.open(written).format, "PNG")
+
+    def test_an_unsound_art_only_face_is_reported_unsound_and_not_ok(self):
+        """bd mtg-l4x. `_face` used to hard-code `problems = []` on this branch — not "no faults
+        found" but "never looked", which is how a fully bordered card shipped marked ok."""
+        from generation.check import Problem
+
+        with mock.patch.object(
+            jobs.pipeline, "art",
+            return_value=jobs.pipeline.Result(
+                Image.new("RGB", (8, 11), "red"),
+                [Problem("matted", "a printed white margin runs around the art")], {}, None,
+            ),
+        ):
+            jobs.run(_job("ART_ONLY").pk)
+
+        job = Job.objects.get()
+        self.assertEqual([r["status"] for r in job.results], ["unsound", "unsound"])
+        self.assertEqual(job.results[0]["problems"][0]["code"], "matted")
+        self.assertIsNone(job.results[0]["panels"], "Art Only paints no furniture to detect")
+        self.assertIsNone(job.results[0]["blank"], "and there is no blank behind it either")
 
 
 class ConcurrencyTests(TransactionTestCase):
@@ -201,6 +225,19 @@ class KeepTheEvidenceTests(TestCase):
         self.assertFalse(blank.exists())
         self.assertIsNone(job.results[0]["blank"])
         self.assertEqual(job.results[0]["panels"], self.STORED, "the boxes are kept either way")
+
+    def test_keep_blanks_keeps_it_on_a_sound_card_too(self):
+        """For an evidence batch the point is to localise a fault BEFORE knowing there is one:
+        with the blank and the composited card side by side, "the model under-painted it" and
+        "the detector under-reported it" are told apart by looking. Off by default — the disk
+        trade above still holds for ordinary runs."""
+        with self.settings(KEEP_BLANKS=True):
+            job = self._run([])
+        blank = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt-blank.png"
+        self.assertTrue(blank.exists())
+        self.assertEqual(blank.read_bytes(), b"the-blank-png")
+        self.assertEqual(job.results[0]["blank"], f"/media/generated/{job.pk}/lightning-bolt-blank.png")
+        self.assertEqual(job.results[0]["status"], "ok", "keeping evidence does not fail the card")
 
 
 class ReapTests(TestCase):

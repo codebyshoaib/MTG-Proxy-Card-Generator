@@ -129,6 +129,18 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Keep the raw pre-composite blank for EVERY face, not only the ones that grade unsound.
+#
+# Off by default because a blank is ~9MB a face and a clean card has nothing to investigate —
+# that trade is `generation.jobs._face`'s own reasoning and it still holds for ordinary runs.
+# On for evidence batches, where the point is to localise a fault BEFORE knowing there is one:
+# with both halves in hand, "the model under-painted it" and "the detector under-reported it"
+# are told apart by looking, and they need opposite fixes. Proved its worth on 2026-08-17, when
+# the blank was what showed a white corner arrived from the model rather than from our compositor.
+#
+#     KEEP_BLANKS=1 uv run python manage.py runserver
+KEEP_BLANKS = os.environ.get('KEEP_BLANKS', '0') == '1'
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
