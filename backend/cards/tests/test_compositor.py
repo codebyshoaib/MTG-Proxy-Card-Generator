@@ -28,6 +28,15 @@ def card(shade):
     return Image.new("RGBA", (1792, 2400), shade + (255,))
 
 
+# A ceiling deliberately high enough never to bind, for the tests below that compare one LAYOUT
+# against another. They used `2400 * compositor.RULES_SIZE` and that stopped being suitable on
+# 2026-08-17, when RULES_SIZE came down from an unmeasured 0.055 (132px) to the measured target
+# (61px, `textlayout.target_size`). Both sides of every comparison then clamped at 61 and the
+# tests asserted 61 < 61. What they are about is the fitter's behaviour across layouts, which the
+# production ceiling has no bearing on, so it is stated here instead of borrowed.
+UNBOUND = 200
+
+
 class PTSizeTests(SimpleTestCase):
     """CLIENT 2026-08-16: "some P/T are large some small".
 
@@ -55,6 +64,60 @@ class PTSizeTests(SimpleTestCase):
         for y0, y1 in ((0.890, 0.940), (0.780, 0.960)):
             box = compositor._box((0.80, y0, 0.94, y1), (1792, 2400))
             self.assertLessEqual(compositor._pt_size(box, 2400), box[3] - box[1])
+
+
+class PlateSizeTests(SimpleTestCase):
+    """CLIENT 2026-08-17, on the sign-off pack: "small somewhere large somewhere" (bd mtg-6bb).
+
+    The same defect as PTSizeTests above, on the two fields it was never generalised to. The name
+    and the type line were fractions of their detected plate's HEIGHT, and the plate is whatever
+    the model painted: replayed over all 58 stored faces the name ran 0.0292-0.0600 of card height
+    and the type line 0.0229-0.0496, on cards of identical size.
+
+    Both now take the size from the card, so two paintings of the same card set the same string at
+    the same size. Measured that way over the repeats in the archive, Sol Ring went 1.48x -> 1.00x
+    and Terror of the Peaks 1.24x -> 1.00x.
+    """
+
+    # Real detected title plates from the archive, as fractions of the card: the median 0.059,
+    # the tallest ordinary one 0.077, and the two that swallowed the art at 0.102 and 0.155.
+    PLATES = [(0.030, 0.089), (0.030, 0.107), (0.030, 0.132), (0.030, 0.185)]
+
+    def _sizes(self, fraction, ceiling):
+        return [
+            compositor._plate_size(
+                compositor._box((0.05, y0, 0.95, y1), (1792, 2400)), 2400, fraction, ceiling
+            )
+            for y0, y1 in self.PLATES
+        ]
+
+    def test_the_name_is_the_same_size_on_every_plate_tall_enough_to_hold_it(self):
+        sizes = self._sizes(compositor.NAME_CARD_SIZE, compositor.NAME_MAX_OF_BOX)
+        self.assertEqual(len(set(sizes)), 1, sizes)
+
+    def test_the_type_line_is_the_same_size_on_every_plate_tall_enough_to_hold_it(self):
+        sizes = self._sizes(compositor.TYPE_CARD_SIZE, compositor.TYPE_MAX_OF_BOX)
+        self.assertEqual(len(set(sizes)), 1, sizes)
+
+    def test_a_plate_too_short_for_the_target_still_contains_its_text(self):
+        """The ceiling is the whole reason a short plate does not overflow. Without it, sizing
+        from the card would print a full-height name off the top and bottom of a stunted one."""
+        for y0, y1 in ((0.030, 0.055), (0.030, 0.045)):
+            box = compositor._box((0.05, y0, 0.95, y1), (1792, 2400))
+            size = compositor._plate_size(box, 2400, compositor.NAME_CARD_SIZE,
+                                          compositor.NAME_MAX_OF_BOX)
+            self.assertLessEqual(size, box[3] - box[1], (y0, y1))
+
+    def test_a_taller_plate_never_makes_the_text_bigger_than_the_card_asked_for(self):
+        """The failure the old code had in one line: a detector that swallowed the art returned a
+        title box 0.155 of the card and the name was set at 0.105 of card height, nearly 3x the
+        smallest in the same archive."""
+        swallowed = compositor._box((0.05, 0.03, 0.95, 0.185), (1792, 2400))
+        self.assertEqual(
+            compositor._plate_size(swallowed, 2400, compositor.NAME_CARD_SIZE,
+                                   compositor.NAME_MAX_OF_BOX),
+            round(2400 * compositor.NAME_CARD_SIZE),
+        )
 
 
 class InkTests(SimpleTestCase):
@@ -288,11 +351,27 @@ class PalettePlusLightTests(SimpleTestCase):
         ink, _, _ = compositor.panel_palette(cool, (0, 0, 800, 800))
         self.assertGreater(ink[2], ink[0])
 
-    def test_display_text_on_a_dark_panel_is_gold(self):
+    def test_display_text_on_a_dark_panel_is_gold_and_unstroked(self):
+        """CHANGED 2026-08-17: this asserted `assertIsNotNone(stroke)`.
+
+        At STROKE=0.055 and a 91px card name that stroke is a five-pixel black outline around every
+        gold letter, and it is what made the ring 4px out read -36 above-left where the reference
+        site's reads +15 to +32 on both sides. Its job — stop painted texture eating the glyph edge —
+        is kept and done with a halo of the letter's own light instead, which is what theirs does.
+
+        BODY text on a dark panel keeps its stroke; only display text lost it. At body size a black
+        stroke round pale text is load-bearing, and the case below is what says so.
+        """
         dark = Image.new("RGBA", (900, 900), (24, 20, 30, 255))
-        ink, stroke, _ = compositor.panel_palette(dark, (0, 0, 800, 800), display=True)
+        ink, stroke, glow = compositor.panel_palette(dark, (0, 0, 800, 800), display=True)
         self.assertEqual(ink, compositor.GOLD)
-        self.assertIsNotNone(stroke)
+        self.assertIsNone(stroke, "a black outline round the card name is the pasted-on look")
+        self.assertGreater(sum(glow[:3]), sum(ink), "the spread under display text is a glow")
+
+    def test_body_text_on_a_dark_panel_keeps_its_stroke(self):
+        dark = Image.new("RGBA", (900, 900), (24, 20, 30, 255))
+        _, stroke, _ = compositor.panel_palette(dark, (0, 0, 800, 800))
+        self.assertIsNotNone(stroke, "body text at 61px needs the stroke the name does not")
 
     def test_shadows_fall_away_from_the_brighter_side(self):
         """Their shadows fall consistently away from the scene's light; a fixed offset is one of
@@ -384,9 +463,9 @@ class StripLayoutTests(SimpleTestCase):
         paragraphs = text.split("\n")
         width = int(1792 * 0.88) - 2
         area = int(2400 * 0.32)
-        slab, _ = textlayout.fit_across([text], [(width, area)], 2400 * compositor.RULES_SIZE)
+        slab, _ = textlayout.fit_across([text], [(width, area)], UNBOUND)
         equal, _ = textlayout.fit_across(
-            paragraphs, [(width, area // 3)] * 3, 2400 * compositor.RULES_SIZE
+            paragraphs, [(width, area // 3)] * 3, UNBOUND
         )
         self.assertLess(equal, slab, "equal strips should be the WORSE case — see the docstring")
 
@@ -399,14 +478,14 @@ class StripLayoutTests(SimpleTestCase):
         starved, _ = textlayout.fit_across(
             paragraphs,
             [(width, max(40, int(area * f))) for f in share],
-            2400 * compositor.RULES_SIZE,
+            UNBOUND,
         )
         self.assertLess(starved, equal, "character share alone should starve the keyword strip")
 
         floored, _ = textlayout.fit_across(
             paragraphs,
             [(width, max(int(2400 * 0.05), int(area * f))) for f in share],
-            2400 * compositor.RULES_SIZE,
+            UNBOUND,
         )
         self.assertGreater(floored, starved, "the per-strip floor is what makes sizing safe")
 
@@ -416,7 +495,7 @@ class StripLayoutTests(SimpleTestCase):
         size, laid = textlayout.fit_across(
             ["Flying", "Whenever this creature attacks, it gets +2/+2 until end of turn."],
             [(600, 200), (600, 200)],
-            2400 * compositor.RULES_SIZE,
+            UNBOUND,
         )
         self.assertEqual(len(laid), 2)
         self.assertIsInstance(size, int)
@@ -524,9 +603,9 @@ class FlavourTextTests(SimpleTestCase):
         """It shares the panel, so asking for it can only shrink the type. That is the trade the
         flag exists to make explicit rather than silent."""
         box = [(900, 300)]
-        without, _ = textlayout.fit_across(["Flying"], box, 2400 * compositor.RULES_SIZE)
+        without, _ = textlayout.fit_across(["Flying"], box, UNBOUND)
         with_flavour, _ = textlayout.fit_across(
-            ["Flying"], box, 2400 * compositor.RULES_SIZE,
+            ["Flying"], box, UNBOUND,
             flavours=["The peaks remember every name they have burned, and they are patient."],
         )
         self.assertLessEqual(with_flavour, without)
@@ -557,9 +636,45 @@ class NoBlendEffectsTests(SimpleTestCase):
     hard-edged. Edge hardness as the p99 horizontal luminance gradient: theirs 169, ours 113
     without the halo, ours 63 with it. This test is what stops them being re-added."""
 
-    def test_no_halo_softening_or_glow_constant_survives(self):
-        for gone in ("HALO_BLUR", "HALO_ALPHA", "SOFTEN", "GLOW_BLUR", "GLOW_ALPHA"):
+    def test_no_glyph_softening_constant_survives(self):
+        """The four names below all belonged to the 2026-08-10 pass that BLURRED THE GLYPH.
+
+        `GLOW_ALPHA` was on this list until 2026-08-17 and came off deliberately, so the ban stays a
+        ban on softening the letterform rather than on a word. What it names now is a spread drawn
+        BEHIND the crisp layer — the same mechanism as the cast shadow this class explicitly keeps —
+        and the difference is measurable rather than a matter of naming. On the title plate, p99
+        horizontal edge gradient:
+
+            the 2026-08-10 halo, drawn on the glyph      113 -> 63    nearly halved
+            the glow, drawn behind the layer             160 -> 95
+
+        and 95 is toward the reference site's own display lettering, which measures 31 and 53 on the
+        two title plates where it can be read cleanly. Their ring 4px out is BRIGHTER than the plate
+        on both sides of the glyph; ours was darker on one side because of a five-pixel black stroke.
+        `test_display_glyph_edges_stay_hard` below is what now holds the line the names were holding.
+        """
+        for gone in ("HALO_BLUR", "HALO_ALPHA", "SOFTEN", "GLOW_BLUR"):
             self.assertFalse(hasattr(compositor, gone), f"{gone} is back — see the note in _stamp")
+
+    def test_display_glyph_edges_stay_hard(self):
+        """The invariant the banned names were a proxy for, measured instead of spelled.
+
+        A dark plate with light lettering is the case that tempts a softening pass, because the
+        painted texture does eat the glyph edge. 80 is set below the 95 the current treatment
+        measures and well above the 63 the softening pass produced.
+        """
+        base = card((32, 34, 40))
+        out, _ = compositor.compose(base, FACE, {"title": PANELS["title"]})
+        x0, y0, x1, y1 = compositor._box(PANELS["title"], out.size)
+        grey = out.crop((x0, y0, x1, y1)).convert("L")
+        pixels = grey.load()
+        gradients = sorted(
+            abs(pixels[x, y] - pixels[x - 1, y])
+            for y in range(grey.height)
+            for x in range(1, grey.width)
+        )
+        p99 = gradients[int(0.99 * len(gradients))]
+        self.assertGreater(p99, 70, f"display glyph edges went soft: p99 gradient {p99}")
 
     def test_the_glyph_layer_is_composited_without_being_blurred(self):
         import inspect
@@ -703,3 +818,203 @@ class PlateExtentTests(SimpleTestCase):
         the peel, where capping out and trusting the result put text on a scroll rod."""
         flat = Image.new("RGBA", (900, 400), (40, 44, 48, 255))
         self.assertEqual(compositor.plate_extent(flat, (0, 150, 900, 250)), (0, 150, 900, 250))
+
+
+class LetteredCostTests(SimpleTestCase):
+    """The lettered mode composites ONE field: the mana cost.
+
+    The model letters the name, type line, rules text and P/T — 25 of 25 on the first three,
+    measured — and cannot count pips past four or draw a hybrid or Phyrexian symbol at all. So the
+    cost stays ours, stamped from the vendored Scryfall SVGs, and nothing else on the card is.
+    """
+
+    def blank(self):
+        """A dark title plate on a pale ground, the shape `plate_box` is given."""
+        image = card((200, 200, 200))
+        ImageDraw.Draw(image).rectangle((90, 100, 1700, 300), fill=(30, 34, 38, 255))
+        return image
+
+    def test_only_the_cost_is_printed(self):
+        image = self.blank()
+        composed, overflowed = compositor.compose(image, FACE, PANELS, lettered=True)
+        self.assertFalse(overflowed)
+        # The type line, rules text and P/T are the model's in this mode. If the compositor set
+        # any of them it would be printing a second copy on top of the model's own.
+        below = composed.crop((0, 1400, 1792, 2400)).convert("L")
+        self.assertEqual(below.getextrema()[0], below.getextrema()[1], "something was drawn below")
+
+    def test_the_pips_land_at_the_right_hand_end_of_the_plate(self):
+        """`prompts._cost_room` reserves that end in the brief off the same constants, so a pip
+        stamped anywhere else lands on lettering the model painted."""
+        before = self.blank()
+        after = compositor.compose(before.copy(), FACE, PANELS, lettered=True)[0]
+        changed = [
+            x for x in range(0, 1792, 8)
+            if before.crop((x, 100, x + 8, 300)).tobytes()
+            != after.crop((x, 100, x + 8, 300)).tobytes()
+        ]
+        self.assertTrue(changed, "nothing was stamped on the plate at all")
+        self.assertGreater(min(changed), 1792 * 0.5, f"pips reached the name's half: {changed[:5]}")
+
+    def test_a_card_with_no_cost_is_left_untouched(self):
+        before = self.blank()
+        after = compositor.compose(before.copy(), {**FACE, "mana_cost": ""}, PANELS, lettered=True)[0]
+        self.assertEqual(before.tobytes(), after.tobytes())
+
+    def test_a_symbol_we_have_no_artwork_for_fails_loudly(self):
+        """CLAUDE.md: an unresolvable symbol must fail loudly, never render as a dropped cost.
+
+        This loop used to `continue` past an unknown token, which prints `{2}{ZZ}` as one pip and
+        calls the card finished — a WRONG cost that looks right, on the one field the whole mode
+        exists to keep correct.
+        """
+        with self.assertRaises(compositor.UnknownSymbol):
+            compositor.compose(self.blank(), {**FACE, "mana_cost": "{2}{ZZ}"}, PANELS, lettered=True)
+
+
+class OcclusionTests(SimpleTestCase):
+    """A thing painted across the panel belongs in FRONT of the text, not behind it.
+
+    MEASURED 2026-08-17 against the reference site's own eighteen cards: their text stack and ours
+    are the same to within a few values — ink RGB (40,35,28) on paper (240,224,191) against their
+    (50,36,25) on (230,200,149), glyph cores flat to sd ~2 on both, and no shadow on either. The
+    difference is that nothing is painted across any panel of theirs, and where our model paints a
+    vine over the scroll we drew the words on top of it. That is a depth error, and it is the one
+    thing this module was actually missing.
+    """
+
+    PANEL = {"rules": (0.06, 0.65, 0.94, 0.90)}
+
+    def parchment(self, vine=True):
+        """A pale panel on a dark card, optionally with a dark bar painted across its middle."""
+        image = card((24, 26, 30))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0.06 * 1792, 0.65 * 2400, 0.94 * 1792, 0.90 * 2400), fill=(238, 222, 188, 255))
+        if vine:
+            # A rope ACROSS the lines rather than along one. Measured on the real cards, a crossing
+            # of this shape covers 0.3%-2.5% of the glyph pixels; a full-width horizontal bar lying
+            # along a text line covers 18% and trips OCCLUDE_MAX_COVER, which is the case below.
+            draw.rectangle(
+                (0.40 * 1792, 0.65 * 2400, 0.425 * 1792, 0.90 * 2400), fill=(48, 62, 34, 255)
+            )
+        return image
+
+    # The rope's own middle, inset past the soft edge of the mask's ramp.
+    MIDDLE = (int(0.404 * 1792), int(0.70 * 2400), int(0.421 * 1792), int(0.86 * 2400))
+
+    def test_text_crossing_the_rope_passes_behind_it(self):
+        """Byte-identical to the vine as the model painted it. Not "the band is dark" — the ink is
+        near-black too, so darkness passes whether the glyph is in front or behind."""
+        before = self.parchment()
+        after = compositor.compose(before.copy(), FACE, self.PANEL)[0]
+        self.assertNotEqual(
+            before.crop((int(0.10 * 1792), int(0.67 * 2400), int(0.35 * 1792), int(0.74 * 2400))).tobytes(),
+            after.crop((int(0.10 * 1792), int(0.67 * 2400), int(0.35 * 1792), int(0.74 * 2400))).tobytes(),
+            "no text was printed anywhere, so the rope proves nothing",
+        )
+        self.assertEqual(
+            before.crop(self.MIDDLE).tobytes(),
+            after.crop(self.MIDDLE).tobytes(),
+            "something was printed on top of the rope",
+        )
+
+    def test_the_same_text_off_the_vine_is_untouched(self):
+        """The occlusion pass must give back the crossing and NOTHING else — a mask that leaked
+        would quietly erase the lines a clean panel prints perfectly well."""
+        clean = compositor.compose(self.parchment(vine=False), FACE, self.PANEL)[0]
+        panel = clean.crop((int(0.10 * 1792), int(0.67 * 2400), int(0.90 * 1792), int(0.74 * 2400)))
+        self.assertLess(panel.convert("L").getextrema()[0], 100, "no text was printed at all")
+
+    def test_a_dark_slab_keeps_its_light_text(self):
+        """A dark slab uses `crossing_mask`, which looks for something distinctly BRIGHTER than the
+        material. A flat slab has nothing of the sort, so nothing may be pasted over its text."""
+        image = card((24, 26, 30))
+        ImageDraw.Draw(image).rectangle(
+            (0.06 * 1792, 0.65 * 2400, 0.94 * 1792, 0.90 * 2400), fill=(38, 42, 58, 255)
+        )
+        out = compositor.compose(image, FACE, self.PANEL)[0]
+        panel = out.crop((int(0.10 * 1792), int(0.67 * 2400), int(0.90 * 1792), int(0.88 * 2400)))
+        self.assertGreater(panel.convert("L").getextrema()[1], 150, "the light text was wiped out")
+
+    def test_a_heavy_crossing_is_not_put_back(self):
+        """CLAUDE.md: a card whose printed text differs from Scryfall must never ship silently, and
+        text with a fifth of it behind a branch breaks that. Above `OCCLUDE_MAX_COVER` the depth
+        stays wrong and the card stays readable — `check.obstructed` is what refuses it."""
+        image = card((24, 26, 30))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0.06 * 1792, 0.65 * 2400, 0.94 * 1792, 0.90 * 2400), fill=(238, 222, 188, 255))
+        draw.rectangle((0.06 * 1792, 0.70 * 2400, 0.94 * 1792, 0.84 * 2400), fill=(48, 62, 34, 255))
+        before = image.copy()
+        after = compositor.compose(image, FACE, self.PANEL)[0]
+        band = (int(0.20 * 1792), int(0.74 * 2400), int(0.70 * 1792), int(0.78 * 2400))
+        self.assertNotEqual(
+            before.crop(band).tobytes(), after.crop(band).tobytes(),
+            "the text was hidden behind the crossing instead of staying on top",
+        )
+
+
+class TabBoxTests(SimpleTestCase):
+    """CLIENT 2026-08-17: the P/T "leaves space before it on left and goes to edge on right".
+
+    The numerals are centred correctly; the box is wrong. A P/T tab sits in the bottom-right corner,
+    so its left edge borders the pale rules panel — the strongest value edge on that part of the
+    card — and its right edge borders the card's own corner scenery, painted in the tab's own dark
+    material. Every over-report measured has been on the right.
+    """
+
+    def test_a_box_wider_than_any_real_tab_is_trimmed_from_the_right(self):
+        box = (1366, 2102, 1708, 2218)  # the measured bad one: aspect 2.95
+        trimmed = compositor._tab_box(box)
+        self.assertEqual(trimmed[0], box[0], "the left edge is the reliable one and must not move")
+        self.assertEqual(trimmed[1:2] + trimmed[3:], box[1:2] + box[3:], "height must not change")
+        self.assertLess(trimmed[2], box[2])
+        aspect = (trimmed[2] - trimmed[0]) / (trimmed[3] - trimmed[1])
+        self.assertAlmostEqual(aspect, compositor.TAB_MAX_ASPECT, places=1)
+
+    def test_boxes_inside_the_reference_range_are_left_alone(self):
+        """Our own five detected boxes measured 0.88, 1.76, 2.41, 2.48 and 2.95. The cap is set at
+        the reference site's widest tab so it fires on the last one only — a clamp at their MEDIAN
+        would drag three correct boxes with it."""
+        for aspect in (0.88, 1.76, 2.41, 2.48):
+            box = (1400, 2100, 1400 + round(120 * aspect), 2220)
+            self.assertEqual(compositor._tab_box(box), box, f"aspect {aspect} was trimmed")
+
+    def test_a_degenerate_box_is_returned_untouched(self):
+        self.assertEqual(compositor._tab_box((10, 50, 90, 50)), (10, 50, 90, 50))
+
+
+class TypeLineCaseTests(SimpleTestCase):
+    """CLIENT 2026-08-17: "Creature - Beast looks small".
+
+    It is not set small. Measured as the ink band's share of its plate: theirs 76.6%, ours 36.4%.
+    Mixed case puts most of the mass at x-height, so the line reads as a ribbon on a tall plate.
+    """
+
+    def test_the_type_line_is_printed_in_caps(self):
+        base = card((228, 208, 172))
+        out, _ = compositor.compose(base, FACE, {"type": PANELS["type"]})
+        x0, y0, x1, y1 = compositor._box(PANELS["type"], out.size)
+        # Caps have no descenders, so the ink band sits entirely above the baseline: the tell is
+        # that the drawn band is TALLER than the same string set mixed-case would be.
+        from PIL import ImageFont
+
+        from cards import fonts
+        size = compositor._plate_size(
+            compositor.printable_face(base, (x0, y0, x1, y1)), out.height,
+            compositor.TYPE_CARD_SIZE, compositor.TYPE_MAX_OF_BOX,
+        )
+        font = ImageFont.truetype(str(fonts.DISPLAY), size)
+        mixed = font.getbbox(FACE["type_line"])
+        upper = font.getbbox(FACE["type_line"].upper())
+        self.assertGreater(upper[3] - upper[1], mixed[3] - mixed[1])
+
+    def test_caps_still_fit_the_plate_they_are_set_on(self):
+        """Caps are wider — 683px against 582px on the measured card — so the width fit in
+        `_display` has to absorb it rather than the line running off the plate."""
+        base = card((228, 208, 172))
+        long_type = {**FACE, "type_line": "Legendary Artifact Creature — Phyrexian Praetor"}
+        out, _ = compositor.compose(base, long_type, {"type": PANELS["type"]})
+        x0, y0, x1, y1 = compositor._box(PANELS["type"], out.size)
+        strip = out.crop((x0, y0, x1, y1)).convert("L")
+        edge = strip.crop((0, 0, round(strip.width * compositor.PAD * 0.6), strip.height))
+        self.assertEqual(edge.getextrema()[0], edge.getextrema()[1], "type line reached the rim")

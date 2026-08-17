@@ -12,9 +12,10 @@ embossed, a dark edge below and a light edge above; and their display text is wa
 dark banner rather than plain white. A one-pixel halo, which is what this module started with, is
 invisible at 70px and reads as cheap.
 
-So text is built up in layers per panel — cast shadow, stroke, fill, emboss —
-with one blur per panel rather than one per glyph, which is what keeps it affordable across a
-100-card deck.
+So text is built up in layers per panel — shadow or glow, stroke, fill — with one blur per panel
+rather than one per glyph, which is what keeps it affordable across a 100-card deck. The emboss that
+sentence used to name was removed 2026-08-17: measured across the reference site's own light-on-dark
+titles the halo is symmetric, not a bevel. See the note above `TRACKING`.
 
 REVISED 2026-08-10 against their FULL-RESOLUTION original rather than a gallery thumbnail: the
 type treatment here is close and the remaining gap is not a blend effect, it is SIZE and LAYOUT.
@@ -23,7 +24,7 @@ See the note above `_stamp`, and `generation.panels` for the multi-panel finding
 
 import colorsys
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 from cards import fonts, symbols, textlayout
 
@@ -46,15 +47,76 @@ PAD = 0.055
 # asking for the flat pale FACE to be tall enough rather than the whole ornamented piece — see
 # bd mtg-8h9, changed the same day and still unverified.
 RULES_PAD = 0.035
-# Display sizes as a fraction of their plate's height. RAISED 2026-08-10: theirs fill their
-# plates and ours sat inside a ring of bare stone, which is the same "smaller and less readable"
-# report as the rules text and the same cause. The plate the detector reports includes the carved
-# rim, so a fraction of it is already conservative before PAD is taken off.
-NAME_SIZE = 0.68
-TYPE_SIZE = 0.66
-# Ceiling as a fraction of CARD height. Their rules text fills its panel; ours sat at half the
-# size and floated in empty stone, because this was 0.030.
-RULES_SIZE = 0.055
+# Name and type line, as a fraction of CARD height. CLIENT 2026-08-17, on the sign-off pack:
+# "small somewhere large somewhere".
+#
+# These used to be fractions of the detected PLATE's height — 0.68 and 0.66 — which is the same
+# bug `_pt_size` below was fixed for a day earlier, and the same argument applies unchanged: the
+# plate is whatever the model painted, so the spread is in the multiplicand and no fraction can
+# narrow it. MEASURED over every stored face that kept its boxes (n=58 name, n=59 type), replaying
+# the old sizing exactly, as a fraction of card height:
+#
+#                 bottom quartile      median     top quartile      spread
+#   card name     0.0292 - 0.0367      0.0396    0.0437 - 0.1054     3.61x
+#   type line     0.0229 - 0.0304      0.0342    0.0383 - 0.0496     2.16x
+#
+# The name's 0.1054 is a title box that swallowed the art; after the width fit in `_title` cut the
+# worst of those back the name still ran 0.0292 - 0.0600, 2.06x, on cards of identical size.
+#
+# So the size comes from the CARD and the plate only ceilings it. FITTED by sweeping candidates
+# back over those same 58 faces — every real detected plate, every real mana cost, every real type
+# line — and reading off the spread each one leaves. The target cannot simply be the old median:
+# a plate has to be about 1.3x the type size to carry it, and the short tail of real plates then
+# clamps, which is spread again from the other end.
+#
+#   name   0.034 -> 1.02x   0.036 -> 1.08x   0.038 -> 1.14x   0.040 -> 1.20x
+#   type   0.030 -> 1.04x   0.032 -> 1.12x   0.034 -> 1.19x
+#
+# So each constant is the largest that holds the spread under 1.15x, because the one directional
+# complaint on record about ABSOLUTE size points up: on 2026-08-10 ours were raised after theirs
+# were measured filling their plates while ours sat in a ring of bare stone. Against the old
+# medians this costs the typical card 4% of its name and 6% of its type line.
+#
+# The type figure excludes Elesh Norn's `Legendary Creature - Phyrexian Praetor`, 38 characters and
+# the longest type line in the archive: it is the ONE card in 59 the width fit had to cut, and it
+# was cut on all ten paintings of it, on plates from 0.562 to 0.880 of the card. No plate the model
+# painted could hold it at target, so no gate would help and a repaint would not either. It needs a
+# region wider than any painting gives — which is the fixed layouts in docs/COMPOSITION-LAYER-
+# FIXES.md, not a number here.
+NAME_CARD_SIZE = 0.038
+TYPE_CARD_SIZE = 0.032
+# Ceiling only, as a fraction of the plate, so a genuinely short plate still contains its text.
+# Beleren Bold's ascent+descent is 0.94 of its em, so 0.80 puts the glyph band at 0.75 of the
+# plate — inside the 0.64 the old 0.68-of-plate produced and well clear of clipping. It binds on
+# 1 of the 57 shippable faces; at 0.75 it binds on 4 and buys nothing.
+#
+# NO FLOOR, unlike P/T. A floor stops a value looking lost on a generous tab; here the generous
+# boxes are detection failures — the two 0.13 and 0.155 title boxes in that population swallowed
+# the art — and forcing those up to a floor would put back exactly the spread this removes.
+NAME_MAX_OF_BOX = TYPE_MAX_OF_BOX = 0.80
+# THE SIZE THE BODY TEXT IS SET AT, in px, taken from the CARD and not from the panel.
+#
+# The same fix the name and type line got on 2026-08-17 and the P/T on 2026-08-16, for the same
+# symptom and by the same argument: the panel is whatever the model painted, so a size derived
+# from it inherits the model's variance and no fraction can narrow that. This is the third and
+# last surface to get it.
+#
+# It used to be a CEILING of 0.055 of card height — 132px — raised from 0.030 on 2026-08-10
+# because the text "sat at half the size and floated in empty stone". That fixed the floating and
+# created the opposite defect, because `fit_across` starts at the ceiling and only comes down: a
+# card with one line of text takes the whole 132px. MEASURED 2026-08-17 over the composited
+# regression run, exactly, from the layout engine rather than from pixels:
+#
+#   Sol Ring     132px  (1 line,  35% panel fill)   Craterhoof 68px (5 lines)   Terror 53px (6)
+#
+# 2.5x across three cards of one deck. Meanwhile `generation.prompts` was already asking the model
+# for a panel sized to hold each card's text at `textlayout.target_size` — 61px, measured over 40
+# real printed cards — so the brief and the compositor were two halves of one contract that had
+# never been introduced. They now read the same number.
+#
+# It stays a ceiling, not a fixed size: a card whose panel cannot hold its text at 61px still
+# steps down, and `RULES_MIN` below still reports it. What is gone is stepping UP.
+RULES_SIZE = textlayout.target_size(2400) / 2400
 # Power/toughness. CLIENT 2026-08-16: "some P/T are large some small".
 #
 # This used to be a fraction of the TAB's height alone, and the tab is whatever the model painted:
@@ -76,6 +138,11 @@ def _pt_size(box, card_height):
     height = box[3] - box[1]
     return max(11, round(min(max(card_height * PT_CARD_SIZE,
                                  height * PT_MIN_OF_BOX), height * PT_MAX_OF_BOX)))
+
+
+def _plate_size(box, card_height, card_fraction, max_of_box):
+    """Display type on a plate: taken from the card, ceilinged by the plate it is printed on."""
+    return max(11, round(min(card_height * card_fraction, (box[3] - box[1]) * max_of_box)))
 # Below this fraction of card height the type is too small to be read across a table, and the
 # real cause is a slab the AI painted too small — Craterhoof came back with visibly smaller text
 # than three other cards in the same batch. Type size varying card to card is worse in a deck
@@ -134,12 +201,29 @@ EMBOSS = 0.030
 #
 # What is left — stroke, cast shadow, emboss — was measured at card size and stays. The gap that
 # is real is SIZE: their body x-height is 34px against our 24px on the same canvas.
+#
+# SUPERSEDED 2026-08-17 for the emboss, on the same axis and a wider sample. The 2026-08-10 reading
+# was one card; measured across the reference site's light-on-dark titles, the ring 4px out is
+# BRIGHTER than the plate on both sides of the glyph (+15/+18 and +32/+15, asymmetry 3.2 and 16.7).
+# That is a symmetric halo of the letter's own light, not a bevel. Ours read -36 above-left against
+# +19 below-right, asymmetry 54.8 — three times their worst. The emboss is gone from the display
+# text and the dark cast shadow under light lettering is now a centred glow (`GLOW_ALPHA`).
 
 # Negative tracking, as a fraction of the font size. Real card titles are set tight; Pillow has
 # no letter-spacing, so display runs are drawn glyph by glyph to get it.
 TRACKING = -0.018
 
 SHADOW_ALPHA = 165
+
+GLOW_ALPHA = 110
+"""Alpha of the halo under LIGHT lettering on a dark plate, in place of a cast shadow.
+
+Set so the ring 4px out lands +15 to +30 over the plate, which is where the reference site's own
+light-on-dark titles measured on 2026-08-17 (Grazilaxx +15/+18, Spellskite +32/+15). Lower than
+`SHADOW_ALPHA` because a halo that reads as bright as the letter turns the letter into a blob —
+the job is to lift the plate away from the glyph, not to outline it.
+"""
+
 # Warm gold for display text on a dark surface: their type line is gold on near-black lava, and
 # plain white reads as a screenshot rather than a printed card.
 GOLD = (248, 227, 176)
@@ -188,7 +272,37 @@ def panel_palette(image, box, display=False):
         # Light text on dark material: keep a trace of the panel's hue so it belongs to the card,
         # and stroke it, because dark painted texture will otherwise eat the glyph edge.
         ink = GOLD if display else _hsv(h, sat * 0.10, 0.97)
-        return ink, (0, 0, 0, 235), _hsv(h, min(1.0, sat * 1.1), val * 0.20, SHADOW_ALPHA)
+        if display:
+            # NO BLACK STROKE ON DISPLAY TEXT, and this is the difference the client circled on
+            # 2026-08-17 ("their text completely satisfies the style and blends in"). At
+            # STROKE=0.055 and a 91px name that is a FIVE-PIXEL black outline drawn around every
+            # gold letter, and it is what the ring measurement below was actually finding.
+            #
+            # The stroke's job — stop dark painted texture eating the glyph edge — is real and is
+            # kept. It is done in the direction of the letter instead of against it: a soft halo of
+            # the letter's own light, which is what the reference site does. Body text is NOT
+            # changed; on a dark rules panel a black stroke round pale text is load-bearing for
+            # legibility at body size, and `check.contrast` is the gate that watches it.
+            return ink, None, _hsv(h, sat * 0.12, 1.0, GLOW_ALPHA)
+        # A GLOW AND NOT A CAST SHADOW, and this is the difference the client circled on 2026-08-17
+        # ("their text completely satisfies the style and blends in").
+        #
+        # MEASURED that day, as the brightness of a 4px ring around the glyph against the plate it
+        # sits on, sampled up-left and down-right so an asymmetric treatment shows up as asymmetry:
+        #
+        #                        above-left   below-right   asymmetry
+        #     THEIRS Grazilaxx      +15.0         +18.2          3.2
+        #     THEIRS Spellskite     +31.8         +15.1         16.7
+        #     OURS                  -36.0         +18.8         54.8
+        #
+        # Theirs is BRIGHTER on both sides — light lettering carrying a soft halo of its own light,
+        # which is why it reads as part of the plate. Ours was dark on one side and light on the
+        # other at three times their worst asymmetry, which is a bevel stuck onto the glyph, and a
+        # bevel is what makes composited type look like a sticker from another product.
+        #
+        # Dark text on a PALE plate keeps its dark shadow below — see the branch after this one, and
+        # their own pale-plate cards, where the lettering is flat dark on flat cream.
+        return ink, (0, 0, 0, 235), _hsv(h, sat * 0.12, 1.0, GLOW_ALPHA)
     # Dark text on pale material: no stroke. A light stroke at 5.5% of the glyph size eats the
     # letterform from outside and black ends up reading grey.
     return (
@@ -196,6 +310,53 @@ def panel_palette(image, box, display=False):
         None,
         _hsv(h, min(1.0, sat * 1.5), val * 0.42, 150),
     )
+
+
+# How far below its own paper a pixel has to sit before it counts as something painted IN FRONT of
+# the surface rather than as the surface's own tone, and the range over which that judgement fades
+# in. A ramp and not a threshold, because a vine the model painted has its own antialiased edge and
+# a hard cut puts a stair-step outline around it when it goes back over the text.
+#
+# MEASURED 2026-08-17 on the three stored blanks of the composited regression run. At 0.30 the mask
+# takes the vines crossing Craterhoof's scroll and the branch crossing Terror's slab, and takes
+# nothing at all on Sol Ring, whose panel is clean — which is the discrimination this needs. Below
+# 0.20 the parchment's own shading starts coming back as foreground; above 0.40 the thinner vines
+# drop out.
+OCCLUDE_DEPTH = 0.30
+OCCLUDE_RAMP = 0.12
+
+
+def _paper(grey):
+    """The value of this surface's own paper.
+
+    The 90th percentile and not the mean: the mean is what `check.contrast` measures, and a mean is
+    exactly what a vine painted across a pale panel hides inside — Craterhoof's scroll reads 211
+    with a vine through it and 222 without, a difference no threshold can sit in. A high percentile
+    asks "what is this surface when nothing is on it", which is the question.
+    """
+    histogram = grey.histogram()
+    target = 0.90 * sum(histogram)
+    running = 0
+    for value, count in enumerate(histogram):
+        running += count
+        if running >= target:
+            return value
+    return 255
+
+
+def foreground_mask(surface):
+    """Soft mask of everything painted in front of this surface's own paper.
+
+    LIGHT SURFACES ONLY. On a dark slab the foreground is whatever is *lighter* than the material
+    and this returns the material itself, so callers gate on `surface_is_dark` first. Not
+    generalised here because no stored blank has painted foreground crossing a dark slab, and an
+    untested inverse branch is a second way to be wrong rather than a feature.
+    """
+    grey = surface.convert("L")
+    paper = _paper(grey)
+    low = round(paper * (1 - OCCLUDE_DEPTH))
+    span = max(1, round(paper * OCCLUDE_RAMP))
+    return grey.point(lambda v: 0 if v >= low else min(255, round(255 * (low - v) / span)))
 
 
 def _box(panel, size):
@@ -352,6 +513,11 @@ PLATE_MAX_GROWTH = 2.5
 def plate_extent(image, box, ratio=FACE_RATIO):
     """`box` grown DOWN and UP to the full height of the plate it sits on.
 
+    NO LONGER CALLED IN PRODUCTION as of 2026-08-17 — `compose.plate_box` dropped it, and the reason
+    and the measurements are in that docstring. Kept, not deleted, because its premise could come
+    back: it is the right mechanism the moment any field is sized from its own box again. Everything
+    below describes what it does, not something the pipeline currently does.
+
     MEASURED 2026-08-16, running `detect` four times over the SAME stored blank:
 
         title box height   132   125   120   214 px
@@ -437,6 +603,58 @@ def _spread(layer, colour, blur, alpha):
     return out.filter(ImageFilter.GaussianBlur(blur))
 
 
+CROSSING_SIGMA = 8.0
+CROSSING_FLOOR = 14
+OCCLUDE_MAX_COVER = 0.15
+"""Finding a thing painted across a DARK plate, where `foreground_mask` cannot help.
+
+CLIENT 2026-08-17, on the art deco Sol Ring: "the rope behind sol ring shall feel like its submerged
+and blended, not imposed cheap." A twisted rope crosses that card's title plate and the card's name
+was printed straight over it, which is the same depth error `_occlude` already fixes on the pale
+rules panel — only the title plate is DARK, so the foreground there is what is BRIGHTER than the
+material rather than darker, and `foreground_mask` returns the material itself.
+
+MEASURED that day over the title plates to hand, as the share of the plate sitting more than
+`CROSSING_SIGMA` median-absolute-deviations above its own median:
+
+    Sol Ring     rope crossing      median  49  MAD  3.0   3.70%
+    Craterhoof   vine crossing      median  70  MAD  1.0   9.39%
+    Lightning B. nothing crossing   median  91  MAD 11.0   0.00%
+    Craterhoof   thorn crossing     median  63  MAD 18.0   0.00%   <- missed
+
+It fires on a crossing over a QUIET plate and does nothing over a grainy one, including one that has
+a real crossing. That asymmetry is why this is used for occlusion and NOT as a gate: a miss changes
+nothing, which is exactly the behaviour before it existed, while a false positive would paste plate
+grain over the card's name. `CROSSING_FLOOR` stops a nearly flat plate — MAD 1 on Craterhoof — from
+setting a threshold so tight that its own shading qualifies.
+
+`OCCLUDE_MAX_COVER` is the legibility backstop, and it applies to every surface. CLAUDE.md's rule
+that survives is that a card whose printed text differs from Scryfall must never ship silently, and
+a name with a third of it hidden behind a rope breaks it as surely as a wrong name would. Above this
+share of the glyph pixels the crossing is simply not put back, and the text stays on top — worse
+depth, readable card. On the pale rules panel `check.obstructed` refuses that card anyway, so the cap
+only ever changes what a card looks like while it is on its way to being repainted.
+"""
+
+
+def crossing_mask(surface):
+    """Soft mask of a distinctly BRIGHT thing crossing a dark surface.
+
+    The counterpart to `foreground_mask`, which does the same job on a pale one. Kept separate
+    rather than folded in, because `generation.check.obstructed` is built on `foreground_mask`'s
+    behaviour and skips dark surfaces on purpose — this must not quietly change what that gate sees.
+    """
+    grey = surface.convert("L")
+    values = sorted(grey.getdata())
+    if not values:
+        return grey.point(lambda _: 0)
+    median = values[len(values) // 2]
+    spread = sorted(abs(value - median) for value in values)[len(values) // 2]
+    low = median + max(CROSSING_FLOOR, round(spread * CROSSING_SIGMA))
+    span = max(1, round((255 - low) * 0.35))
+    return grey.point(lambda v: 0 if v <= low else min(255, round(255 * (v - low) / span)))
+
+
 def _stamp(image, layer, box, size, colour, direction=(1, 1)):
     """Composite a finished text layer onto the card, its own cast shadow first.
 
@@ -445,12 +663,66 @@ def _stamp(image, layer, box, size, colour, direction=(1, 1)):
     added at zero offset and the glyphs are not softened — see the note above on why a halo and
     a sub-pixel blur were tried and measured to be wrong.
     """
-    offset = max(1, round(size * SHADOW_OFFSET))
+    # A LIGHT spread is a glow and a glow has no direction — it is the letter's own light on the
+    # plate, so it sits centred and lands evenly on all sides. Offsetting it away from the scene's
+    # light, which is right for a cast shadow, is what measured as a bevel against the reference
+    # site's even halo (see `panel_palette`). Decided by the colour rather than by a flag, because
+    # `panel_palette` already chose it for this surface and a second switch could disagree with it.
+    glow = 0.2126 * colour[0] + 0.7152 * colour[1] + 0.0722 * colour[2] > 128
+    offset = 0 if glow else max(1, round(size * SHADOW_OFFSET))
+    # Kept before anything is composited, so `_occlude` sees the surface as the model painted it.
+    surface = image.crop(box)
     image.alpha_composite(
         _spread(layer, colour, max(1, round(size * SHADOW_BLUR)), colour[3]),
         (box[0] + offset * direction[0], box[1] + offset * direction[1]),
     )
     image.alpha_composite(layer, (box[0], box[1]))
+    # EVERY surface, not just the pale rules panel. The client's "the rope behind sol ring shall
+    # feel like its submerged" is the title plate, and the type plate and P/T tab have the same
+    # crossings for the same reason — the brief asks for them.
+    _occlude(image, surface, layer, box)
+
+
+def _occlude(image, surface, layer, box):
+    """Put the panel's own foreground back OVER the text. Returns the share of the text it hides.
+
+    THE ONE THING THIS MODULE WAS MISSING, and it is a depth error rather than a blend one.
+    MEASURED 2026-08-17, our three composited regression cards against the reference site's own
+    Craterhoof: their text and ours are the same stack to within a few values — ink RGB (40,35,28)
+    on paper (240,224,191) against their (50,36,25) on (230,200,149), glyph cores flat to sd ~2 on
+    both sides, and a ring 2-3px outside the glyph reading -63 on ours and -67 on theirs, which is
+    antialiasing on both and a drop shadow on neither. There is no filter to copy.
+
+    What differs is that nothing on any of their eighteen cards is painted across the panel their
+    text sits on — the scene wraps the border and stops. Ours paints vines over the scroll, and we
+    then drew the text ON TOP of the vines. 8.4% of Craterhoof's glyph pixels and 9.6% of Terror's
+    landed on substrate darker than 150. Text in front of a thing that is in front of the panel is
+    what reads as a sticker, however the glyph itself is rendered.
+
+    So the crossing goes back on top and the text passes behind it.
+
+    THE MASK IS CHOSEN BY THE SURFACE. On a pale panel the foreground is what is darker than the
+    paper (`foreground_mask`); on a dark plate it is what is distinctly brighter (`crossing_mask`).
+    Picking by polarity rather than by a flag, because the caller already knows neither and the
+    surface itself is the only thing that does.
+
+    Above `OCCLUDE_MAX_COVER` of the glyph pixels nothing is put back — see that constant. Better a
+    readable card with the depth wrong than an unreadable one with the depth right, and on the rules
+    panel `check.obstructed` refuses the card at that point anyway.
+    """
+    if surface.size != layer.size:
+        return 0.0
+    dark = surface_is_dark(surface, (0, 0) + surface.size)
+    mask = crossing_mask(surface) if dark else foreground_mask(surface)
+    ink = layer.getchannel("A")
+    total = ImageStat.Stat(ink).sum[0]
+    if not total:
+        return 0.0
+    covered = ImageStat.Stat(ImageChops.multiply(ink, mask)).sum[0] / total
+    if covered > OCCLUDE_MAX_COVER:
+        return 0.0
+    image.paste(surface, (box[0], box[1]), mask)
+    return covered
 
 
 def _tracked_width(font, text, tracking):
@@ -500,13 +772,55 @@ def _write(draw, xy, text, font, fill, stroke, size, anchor=None, emboss=False):
     )
 
 
-def compose(png, face, panels, include_flavor_text=False):
+TAB_MAX_ASPECT = 2.5
+"""Widest a P/T box may be, as width/height, before it is trimmed from the RIGHT.
+
+CLIENT 2026-08-17: "look at ours" — the numerals leaving a gap at the tab's left and running off its
+right. They are centred correctly; the BOX is wrong. On the card in question it was reported at
+x0.762-0.953 where the tab's flat face measured x0.776-0.866 by column stddev (1.5-6.3 inside the
+face, 16-64 past it), so centring put the value 119px right of where it belonged.
+
+TRIMMED FROM THE RIGHT, and the asymmetry is structural rather than a guess. The tab lives in the
+bottom-right corner: its LEFT edge borders the pale rules panel, which is the strongest value edge on
+that part of the card, and its RIGHT edge borders the card's own corner scenery, which the model
+paints in the tab's own dark material. Every over-report measured has been on the right.
+
+2.5 IS THE REFERENCE SITE'S OWN CEILING, read off all eighteen of their stored cards: their tabs run
+from about 1.0 (the discs on Elemental, Devil, Sunspine Lynx) to about 2.5 (the banners on Agate
+Instigator and Spellskite). A box wider than anything in that population has swallowed scenery. Our
+own five detected boxes are 0.88, 1.76, 2.41, 2.48 and 2.95 — so this fires on exactly the one that
+is visibly broken and leaves the other four untouched, which is the whole point of setting it at
+their maximum rather than at their median.
+
+REJECTED FIRST, and worth recording so it is not re-attempted blind: segmenting the box by column
+stddev and keeping the largest flat run. It is the more principled measurement and it moved two boxes
+that were already correct — stored Terror by 40px — on a sample of five with no ground truth for four
+of them. `printable_face` cannot do this job either: its threshold is the box's median row stddev
+times FACE_RATIO, and a box that is half tab and half foliage has a median high enough that the
+threshold lands above the foliage's own noise, so it peels nothing (measured: 0px on this card).
+"""
+
+
+def _tab_box(box):
+    """A P/T box trimmed to a plausible tab. Returns it unchanged when it already is one."""
+    x0, y0, x1, y1 = box
+    height = y1 - y0
+    if height <= 0 or (x1 - x0) <= height * TAB_MAX_ASPECT:
+        return box
+    return (x0, y0, x0 + round(height * TAB_MAX_ASPECT), y1)
+
+
+def compose(png, face, panels, include_flavor_text=False, lettered=False):
     """(finished card, whether the rules text overflowed its panel).
 
     A panel the detector did not find is skipped rather than guessed at — a card missing its type
     line is obvious, while a type line printed over the art looks like a design choice. The
     overflow flag means the AI painted a slab too small for this card's text, which is a reason to
     regenerate the art rather than something the compositor can fix.
+
+    `lettered` means the model already set every field except the cost, so this stamps the cost and
+    nothing else. Overflow is always False there: the model sized the panel to text it could see,
+    which is the whole reason that mode exists (bd mtg-469).
     """
     image = Image.open(png).convert("RGBA") if not isinstance(png, Image.Image) else png.copy()
     light = light_direction(image)
@@ -516,18 +830,70 @@ def compose(png, face, panels, include_flavor_text=False):
         return printable_face(image, _box(panel, image.size))
 
     def plate_box(panel):
-        """A display plate, grown back to its painted height before the rim is peeled off.
+        """A display plate, with its carved rim peeled off so text lands on the flat face.
 
-        The display plates set their type as a fraction of the box's HEIGHT, so they are the two
-        surfaces where an unstable detection becomes a visibly wrong card rather than a slightly
-        tight one — measured at a 78% swing in name size across four detections of one image.
+        `plate_extent` USED TO RUN HERE and was removed 2026-08-17, premise first. Its docstring
+        states that premise plainly: "`_title` sets the name as a fraction of the box's HEIGHT, so an
+        unstable box is an unstable name". That stopped being true earlier the same day, when
+        NAME_CARD_SIZE and `_plate_size` moved the name and the type line onto the CARD's height with
+        the box as a ceiling only. The instability it was built to absorb is absorbed upstream now.
+
+        MEASURED over four stored blanks, with and without the growth. The name came out 91px on
+        every card BOTH WAYS — it no longer moves the size at all — while the vertical placement of
+        the ink inside the DETECTED plate went:
+
+                            with growth        without
+            new3          20.9% / 20.9%     20.9% / 20.9%
+            new           21.9% / 21.2%     21.9% / 21.2%
+            Craterhoof    24.2% / 34.8%     29.8% / 30.4%
+            Terror        37.0% /  2.2%     20.0% / 19.3%
+
+        as (gap above, gap below). On two cards it changes nothing; on the other two it walks the box
+        past the plate's lower rim into the art and the text follows it down. On Terror that leaves
+        the card's name three pixels off the bottom edge of the plate it is supposed to sit on, with
+        a third of the plate empty above it — which is the "look at ours" the client circled on
+        2026-08-17.
+
+        Same shape as deleting the guessed P/T box (38f6b16): a mechanism built to paper over an
+        upstream defect, kept after the defect was fixed, doing nothing but its own side effects.
         """
-        return printable_face(image, plate_extent(image, _box(panel, image.size)))
+        return printable_face(image, _box(panel, image.size))
+
+    if lettered:
+        if panels.get("title"):
+            # THE RAW BOX, not `plate_box`. MEASURED on Progenitus, 2026-08-17: `plate_extent`
+            # grew a title box reported at y 0.05-0.15 all the way to y 0.00, and the pips centred
+            # in that box rode half off the top of the plate. Both repairs are tuned for a BLANK
+            # surface — they find a plate's painted extent by scanning for the value edge where it
+            # meets the art, and on a lettered card the name's own strokes are value edges, so the
+            # scan walks past the rim and into the picture. There is nothing left to repair here
+            # anyway: `panels.read_back` is asked for this box on a FINISHED card, where the plate
+            # is as plain to the model as it is to a reader.
+            _cost(image, face, _box(panels["title"], image.size), light)
+        return image, False
 
     if panels.get("title"):
         _title(image, face, plate_box(panels["title"]), light)
     if panels.get("type"):
-        _display(image, face["type_line"], plate_box(panels["type"]), TYPE_SIZE, light)
+        type_box = plate_box(panels["type"])
+        # SET IN CAPS. CLIENT 2026-08-17: "Creature - Beast looks small". It is not set small — it is
+        # set in mixed case, so most of its visual mass is x-height and the line reads as a thin
+        # ribbon on a tall plate. MEASURED that day against their own Craterhoof, as the ink band's
+        # share of the plate it sits on: theirs 79px in a 103px plate, 76.6%; ours 56px in a 154px
+        # plate, 36.4%. Less than half the presence at a comparable point size.
+        #
+        # Caps is the free half of the gap: at the SAME em, `CREATURE - BEAST` measures 71px against
+        # `Creature - Beast` at 56px, so 1.27x taller for nothing, and 683px wide against 582px in
+        # 1316px of available room, so it never costs a size step. 9 of the reference site's 18
+        # stored cards set the type line in caps, Craterhoof among them.
+        #
+        # The other half is TYPE_CARD_SIZE, and it is NOT taken here. Their absolute ink is 1.41x
+        # ours, so caps leaves about 1.11x on the table, which would mean 0.032 -> 0.036 — and that
+        # constant's own note measures the size spread across the archive at 1.12x at 0.032 against
+        # 1.19x at 0.034, past the 1.15x bar it was set to hold. Trading consistency across a deck
+        # for one card's presence is the trade that produced "small somewhere large somewhere".
+        _display(image, face["type_line"].upper(), type_box, light,
+                 size=_plate_size(type_box, image.height, TYPE_CARD_SIZE, TYPE_MAX_OF_BOX))
     overflowed = False
     if panels.get("rules") and face.get("oracle_text"):
         shield = _box(panels["pt"], image.size) if panels.get("pt") else None
@@ -551,9 +917,81 @@ def compose(png, face, panels, include_flavor_text=False):
         # measured 12/12 today against 35% when it was briefed as a shield, and the tab is asked
         # for with a flat even face rather than a pointed rim.
         pt = f"{face['power']}/{face['toughness']}"
-        pt_box = _box(panels["pt"], image.size)
-        _display(image, pt, pt_box, None, light, size=_pt_size(pt_box, image.height))
+        pt_box = _tab_box(_box(panels["pt"], image.size))
+        _display(image, pt, pt_box, light, size=_pt_size(pt_box, image.height))
     return image, overflowed
+
+
+class UnknownSymbol(KeyError):
+    """A mana symbol we hold no artwork for. CLAUDE.md: this must fail loudly.
+
+    `symbols.pip` answers None for a token with no vendored SVG, and this loop used to `continue`
+    past it — which prints `{2}{G}` as one green pip and calls the card finished. A cost missing a
+    symbol is a WRONG cost, not a slightly plainer one, and it is invisible on the finished card
+    precisely because the remaining pips still look right. `jobs._face` catches this per face, so
+    one unrenderable cost is reported failed and the rest of the deck still paints.
+    """
+
+
+def _draw_pips(layer, tokens, pip_px, right, height):
+    """Stamp `tokens` right-aligned at `right`, reversed, on `layer`. Vertically centred.
+
+    Shared by the composited path, where the name shrinks around the cost, and the lettered one,
+    where the model painted the name and left the room the brief reserved.
+    """
+    x = right
+    for token in tokens:
+        pip = symbols.pip("{" + token + "}", pip_px)
+        if pip is None:
+            raise UnknownSymbol(f"no vendored artwork for the mana symbol {{{token}}}")
+        x -= pip_px
+        layer.alpha_composite(pip, (round(x), round((height - pip_px) / 2)))
+        x -= round(pip_px * 0.10)
+
+
+CARD_ASPECT = 2400 / 1792
+"""Our canvas, height over width — the same one the reference site paints on."""
+
+
+def cost_width(face, box):
+    """How much of the CARD'S WIDTH this cost will take when stamped into `box`, in fractions.
+
+    The same arithmetic `_cost` does in pixels, in the unit a caller holding only 0-1 boxes can
+    use. `check.cost_collides` is that caller: the cost lands against the plate's right end and
+    the only thing there to hit is the name the model lettered, and both arrive as fractions from
+    `panels.read_back` with no image between them.
+    """
+    tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
+    if not tokens:
+        return 0.0
+    # `_plate_size` in fractions of the card's HEIGHT, then the pip at 0.92 of it and a tenth of a
+    # pip of gap, then across to fractions of the card's WIDTH.
+    size = min(NAME_CARD_SIZE, (box[3] - box[1]) * NAME_MAX_OF_BOX)
+    return len(tokens) * 1.10 * 0.92 * size * CARD_ASPECT
+
+
+def _cost(image, face, box, light=(1, 1)):
+    """The mana cost alone, for the mode where the model lettered everything else.
+
+    WHY THIS IS THE ONE FIELD WE KEEP. Measured over 25 lettered generations the model took the
+    name and the rules text 25 of 25 and the mana cost 18 of 22 — every ordinary cost of four pips
+    or fewer, and none of the four that need counting past four or a compound pip. See
+    `prompts._lettering_block`.
+
+    No shrink loop, because there is no name of ours to shrink: the size comes straight off
+    `_plate_size`, which is where `_title`'s loop starts from anyway, and the room was reserved in
+    the brief by `prompts._cost_room` from these same constants.
+    """
+    tokens = list(reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")))
+    if not tokens:
+        return
+    x0, y0, x1, y1 = box
+    height = y1 - y0
+    pad = round(height * PAD) + round((x1 - x0) * 0.015)
+    size = _plate_size(box, image.height, NAME_CARD_SIZE, NAME_MAX_OF_BOX)
+    layer, _ = _layer(box)
+    _draw_pips(layer, tokens, max(1, round(size * 0.92)), (x1 - x0) - pad, height)
+    _stamp(image, layer, box, size, panel_palette(image, box, display=True)[2], light)
 
 
 def _title(image, face, box, light=(1, 1)):
@@ -570,12 +1008,17 @@ def _title(image, face, box, light=(1, 1)):
     Craterhoof's four did not. So the two shrink TOGETHER now. The loop is the only honest way to
     do it, because the fit is circular — the pips set how much room the name has, and the name's
     size sets how big the pips are.
+
+    What the loop starts FROM changed on 2026-08-17: `_plate_size`, off the card, rather than a
+    fraction of the plate. See NAME_CARD_SIZE. The loop itself is kept and is not the defect — it
+    is driven by how long the NAME is, which no amount of fixed geometry can decide for us, and
+    replayed over the 58 stored faces it moved only 5 of them.
     """
     x0, y0, x1, y1 = box
     fill, stroke, shadow = panel_palette(image, box, display=True)
     height = y1 - y0
     pad = round(height * PAD) + round((x1 - x0) * 0.015)
-    size = max(12, round(height * NAME_SIZE))
+    size = _plate_size(box, image.height, NAME_CARD_SIZE, NAME_MAX_OF_BOX)
     tokens = list(reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")))
 
     def pip_size(at):
@@ -596,14 +1039,7 @@ def _title(image, face, box, light=(1, 1)):
 
     pip_px = pip_size(size)
     layer, draw = _layer(box)
-    x = (x1 - x0) - pad
-    for token in tokens:
-        pip = symbols.pip("{" + token + "}", pip_px)
-        if pip is None:
-            continue
-        x -= pip_px
-        layer.alpha_composite(pip, (round(x), round((height - pip_px) / 2)))
-        x -= round(pip_px * 0.10)
+    _draw_pips(layer, tokens, pip_px, (x1 - x0) - pad, height)
     ascent, descent = font.getmetrics()
     _write_tracked(
         draw,
@@ -614,23 +1050,24 @@ def _title(image, face, box, light=(1, 1)):
         stroke,
         size,
         tracking,
-        emboss=True,
     )
     _stamp(image, layer, box, size, shadow, light)
 
 
-def _display(image, text, box, size_fraction, light=(1, 1), size=None):
-    """Type line and P/T: centred, embossed, stroked.
+def _display(image, text, box, light=(1, 1), *, size):
+    """Type line and P/T: centred and stroked, at a size the CALLER decided.
 
-    `size` overrides the box-relative sizing. The P/T passes it, because sizing that field off its
-    own box is what made it vary 3.6x across a batch; the type line does not, because its plate
-    spans most of the card and its height is the size (`test_height_is_never_peeled_because_height
-    _is_the_type_size`).
+    There is no box-relative fallback any more. Both callers now size from the card and clamp to
+    the box — the P/T since 2026-08-16 and the type line since 2026-08-17 — because sizing a field
+    off its own detected box is what made it vary 3.6x across a batch.
+
+    The width fit below stays, and it is a different thing: it answers "is this STRING too long for
+    this plate", not "how big is this plate". A type line runs from "Land" to "Legendary Artifact
+    Creature — Phyrexian Horror", and only the string can decide that.
     """
     x0, y0, x1, y1 = box
     fill, stroke, shadow = panel_palette(image, box, display=True)
     height, available = y1 - y0, (x1 - x0) * (1 - 2 * PAD)
-    size = size or max(11, round(height * size_fraction))
     font = ImageFont.truetype(str(fonts.DISPLAY), size)
     tracking = size * TRACKING
     while size > 11 and _tracked_width(font, text, tracking) > available:
@@ -651,7 +1088,6 @@ def _display(image, text, box, size_fraction, light=(1, 1), size=None):
         stroke,
         size,
         tracking,
-        emboss=True,
     )
     _stamp(image, layer, box, size, shadow, light)
 
@@ -805,6 +1241,7 @@ def _rules(image, text, boxes, shield=None, light=(1, 1), flavour=""):
                 _divider(draw, pad_x, y - round(gap * 0.45), width, fill)
             _line(layer, draw, line, pad_x, y, size, pip_px, fill, stroke)
             y += lh
+        # `_stamp` runs the occlusion pass now, for every surface rather than this one.
         _stamp(image, layer, box, size, shadow, light)
     return overflowed
 
