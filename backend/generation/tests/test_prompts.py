@@ -358,6 +358,132 @@ class ArtOnlyBriefTests(SimpleTestCase):
         self.assertIn(prompts.REFERENCE, prompts.creative_full(GREEN))
 
 
+class LetteredBriefTests(SimpleTestCase):
+    """`lettered=True`: the model letters the card itself, from the card handed over as JSON.
+
+    EXPERIMENT 2026-08-19 (`Project Material/EXPERIMENT-json-lettering-2026-08-19/`), aimed at bd
+    mtg-469: a model that letters the card sizes the panel to its own text, so the demand that has
+    no authority stops being needed. Five cards took every field 5 of 5, mana cost included — the
+    one field `HANDOVER-2026-08-09` measured a PROSE version failing on over 24 generations.
+
+    These tests exist because the mode is a SWITCH inside the same brief, not a second brief. Every
+    rule the composited mode has learned — full bleed, the surfaces, the value split, the set
+    symbol and rune bans — has to still be there, and only the lettering clauses may flip.
+    """
+
+    def _lettered(self, face=None, **kwargs):
+        return prompts.creative_full(face or GREEN, lettered=True, **kwargs)
+
+    def test_the_card_is_handed_over_as_exact_strings(self):
+        brief = self._lettered()
+        self.assertIn('"name": "Craterhoof Behemoth"', brief)
+        self.assertIn('"rules_text": "Trample, haste"', brief)
+        self.assertIn("CHARACTER FOR CHARACTER", brief)
+
+    def test_the_writing_ban_is_inverted_and_not_dropped(self):
+        """The ban's job was never "no text" — it was "no text we did not author". A fabricated
+        subtype in the right font is invisible, so in this mode the given strings become the
+        whitelist and everything else stays banned."""
+        brief = self._lettered()
+        self.assertNotIn("NO WRITING ANYWHERE ON THIS IMAGE", brief)
+        self.assertIn("the ONLY writing anywhere on this image is the exact strings", brief)
+        self.assertIn("no flavour text", brief)
+        self.assertIn("no artist credit", brief)
+
+    def test_the_ban_keeps_its_measured_last_place(self):
+        """Stated mid-brief it lost on 2 of 3 cards. Two sentences follow it in both modes and
+        nothing else may."""
+        tail = [line for line in self._lettered().split("\n") if line.strip()][-3:]
+        self.assertTrue(tail[0].startswith("ABSOLUTE REQUIREMENT"), tail[0][:60])
+        self.assertTrue(tail[1].startswith("NO SET SYMBOL"))
+        self.assertTrue(tail[2].startswith("RUNES ESPECIALLY"))
+
+    def test_every_rule_the_composited_mode_learned_is_still_here(self):
+        brief = self._lettered()
+        for rule in ("THE CARD IS FULL BLEED", "THE RAISED SURFACES", "VALUE, and getting this "
+                     "wrong", "THE ARTWORK DOMINATES", "THE OVERLAP", "NO SET SYMBOL",
+                     "RUNES ESPECIALLY"):
+            self.assertIn(rule, brief, rule)
+
+    def test_the_panel_is_sized_by_the_model_and_not_demanded_as_a_fraction(self):
+        """bd mtg-469 measured the demand's authority at 0.10 over 58 faces. In this mode the
+        model can see the text, so a fraction here would be a second and weaker instruction
+        against the thing it is looking at."""
+        brief = self._lettered()
+        self.assertNotIn("of the card's height — that is the clear even area alone", brief)
+        self.assertIn("SIZE THE BROAD PALE STRIP TO ITS TEXT, both ways", brief)
+
+    def test_a_short_card_is_told_to_shrink_the_panel_not_only_to_grow_it(self):
+        """Sol Ring's sixteen characters came back in a panel covering a third of the card,
+        because the first version of this block only pushed one way."""
+        self.assertIn("Short rules text gets a SHORT strip", self._lettered())
+
+    def test_the_type_line_is_printed_once(self):
+        """Tromell came back with it under the title AND above the rules panel."""
+        self.assertIn("NOWHERE ELSE", self._lettered())
+        self.assertIn("each field appears EXACTLY ONCE", self._lettered())
+
+    def test_the_pt_field_is_only_described_on_a_card_that_has_one(self):
+        """Same rule as the order clause and the tab's value: a card told about a surface it does
+        not have has been told to paint it (bd mtg-m8q)."""
+        self.assertNotIn("power_toughness", self._lettered())
+        creature = {**GREEN, "power": "5", "toughness": "5"}
+        self.assertIn('"power_toughness": "5/5"', self._lettered(creature))
+
+    def test_the_composited_mode_is_untouched(self):
+        composited = prompts.creative_full(GREEN)
+        self.assertIn("NO WRITING ANYWHERE ON THIS IMAGE", composited)
+        self.assertNotIn("CHARACTER FOR CHARACTER", composited)
+        self.assertNotIn("Craterhoof Behemoth", composited)
+
+
+class LetteredManaCostTests(SimpleTestCase):
+    """The one field the lettered mode does NOT hand over.
+
+    MEASURED over 25 lettered generations: name 25/25, rules text 25/25, mana cost 18 of 22. The
+    four failures are one pattern — Progenitus painted 9 pips of ten, Niv-Mizzet 5 of six, Kitchen
+    Finks drew hybrid {G/W} as two pips and Birthing Pod drew Phyrexian {G/P} as plain green. Every
+    cost of four ordinary pips or fewer came back 18 of 18. `HANDOVER-2026-08-09` reached the same
+    place from a prose brief over 24 generations, so this is the second independent measurement.
+    """
+
+    COST = {**GREEN, "mana_cost": "{5}{G}{G}{G}"}
+
+    def _lettered(self, face=None, **kwargs):
+        return prompts.creative_full(face or self.COST, lettered=True, **kwargs)
+
+    def test_the_cost_is_not_among_the_strings_the_model_is_given(self):
+        brief = self._lettered()
+        self.assertNotIn('"mana_cost"', brief)
+        self.assertNotIn("{5}{G}{G}{G}", brief)
+
+    def test_the_room_it_needs_is_reserved_instead(self):
+        self.assertIn("OF THE TOP PLATE IS RESERVED", self._lettered())
+
+    def test_a_longer_cost_reserves_more_of_the_plate(self):
+        """The reserve is derived from `compositor.NAME_CARD_SIZE`, not guessed, so a four-pip
+        card cannot be handed the same gap as a one-pip card — which is the shape of the client's
+        2026-08-16 report that Craterhoof's four pips collided with its name."""
+        self.assertGreater(
+            prompts._cost_room(["5", "G", "G", "G"]), prompts._cost_room(["1"])
+        )
+
+    def test_a_card_with_no_cost_is_told_nothing_about_one(self):
+        """bd mtg-m8q: a card told about a surface it does not have has been told to paint it.
+        `Forest`, `Tree of Tales` and `Ancestral Vision` all correctly printed no cost."""
+        self.assertNotIn("RESERVED", self._lettered(GREEN))
+
+    def test_the_final_ban_names_mana_symbols(self):
+        """Late beats early in this brief, measured. The reservation clause is early; the ban is
+        the last sentence, and it is the one that has to carry the prohibition."""
+        self.assertIn("NO MANA SYMBOLS", self._lettered())
+
+    def test_the_composited_mode_still_hands_over_nothing(self):
+        composited = prompts.creative_full(self.COST)
+        self.assertNotIn("RESERVED", composited)
+        self.assertIn("no mana symbols", composited)
+
+
 class CreativeFullBriefTests(SimpleTestCase):
     """Creative Full inverts Art Only: furniture is the deliverable, lettering is the defect."""
 
@@ -769,6 +895,18 @@ class CreativeFullBriefTests(SimpleTestCase):
         self.assertNotIn("a small raised tab", prompts.creative_full(GREEN))
         self.assertIn("a small raised tab", prompts.creative_full({**GREEN, "power": "5"}))
 
+    def test_the_order_clause_does_not_name_a_tab_on_a_card_that_has_none(self):
+        """bd mtg-m8q. The surface ORDER clause said "the shield, if there is one, is at the
+        bottom right" on every card — naming a fourth surface one sentence after "Paint exactly
+        these 3 raised surfaces and no others", in the one word the P/T clause above exists to
+        avoid. MEASURED over all 75 stored faces: Sol Ring painted an empty shield on 2 of 2
+        Creative Full runs and both graded clean. "If there is one" was doing no work, because
+        the model has no way to know whether there is one."""
+        spell = prompts.creative_full(GREEN)
+        self.assertNotIn("shield", spell)
+        self.assertNotIn("bottom right", spell)
+        self.assertIn("the tab is at the bottom right", prompts.creative_full({**GREEN, "power": "5"}))
+
     def test_the_pt_tab_shape_is_left_open_because_naming_one_pinned_it(self):
         """MEASURED 2026-08-16 across 18 full-res CREATURE cards from their gallery: rounded
         rectangle or tab 11, disc 2, bare-on-the-art or irregular 3, SHIELD 2. Shield is 11% of the
@@ -1117,3 +1255,46 @@ class MonoBlackPaletteTests(SimpleTestCase):
         something to assign — and has not been measured failing there."""
         brief = prompts.creative_full({**GREEN, "color_identity": ["B", "R"]}, palette="fire")
         self.assertIn("brightest and hottest thing in the frame", brief)
+
+
+class CoarseScreenTests(SimpleTestCase):
+    """The texture-scale rule has to ride ON the style string, not sit far away in `QUALITY`.
+
+    MEASURED 2026-08-17: as a `QUALITY` clause it moved art-zone edge energy at 1:1 from 46.4 to
+    40.5 on one `comic_book` Craterhoof, against the reference site's 8.0-21.6 across all eighteen
+    of their stored cards. The style text is the first and most concrete thing the brief says about
+    medium, and a general rule that far from it loses to the style's own "halftone dot texture".
+    """
+
+    def test_a_style_that_names_a_screen_is_told_to_make_it_coarse(self):
+        text = prompts._style_text("comic_book")
+        self.assertIn("halftone dot texture", text, "the client's own style wording was dropped")
+        self.assertIn("coarse", text.lower())
+
+    def test_every_style_naming_a_screen_gets_it(self):
+        named = [key for key, text in prompts.STYLES.items() if prompts.SCREEN.search(text)]
+        # The screens, named rather than counted: a count drifts silently when a style is reworded,
+        # and these four are the ones whose own text asks for the grid by name.
+        for key in ("comic_book", "manga", "ink_drawing", "propaganda_poster"):
+            self.assertIn(key, named, f"{key} stopped being recognised as a screen style")
+        for key in named:
+            self.assertIn("coarse", prompts._style_text(key).lower(), key)
+
+    def test_brushwork_and_flat_shading_are_not_treated_as_screens(self):
+        """bd mtg-z12: naming an object summons it. `expressionism`'s "raw texture" is paint and
+        `low_poly` is flat facets, so neither has a grid to size — telling them their halftone must
+        be coarse is how they acquire one."""
+        for key in ("digital_art", "oil_painting", "adventure_time", "low_poly", "expressionism"):
+            if key not in prompts.STYLES:
+                continue
+            text = prompts._style_text(key)
+            self.assertNotIn("halftone", text.lower(), key)
+            self.assertNotIn("coarse", text.lower(), key)
+
+    def test_free_text_asking_for_a_screen_gets_the_same_clause(self):
+        """The Custom Art Style field is the same field, so a user typing "halftone comic" has asked
+        for the screen by hand and needs the scale rule as much as the catalogue does."""
+        self.assertIn("coarse", prompts._style_text("halftone comic inks").lower())
+
+    def test_free_text_with_no_screen_passes_through_untouched(self):
+        self.assertEqual(prompts._style_text("watercolour on wet paper"), "watercolour on wet paper")

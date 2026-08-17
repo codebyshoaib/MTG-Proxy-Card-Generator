@@ -9,9 +9,11 @@ Scryfall `color_identity`, never from the style, because purple reads as black m
 purple-tinted mono-green card misstates its own cost.
 """
 
+import json
 import math
+import re
 
-from cards import compositor, textlayout
+from cards import compositor, symbols, textlayout
 
 COLOURS = {"W": "white", "U": "blue", "B": "black", "R": "red", "G": "green"}
 
@@ -28,30 +30,13 @@ CANVAS = (1792, 2400)
 # the lines, and asks for a strip too short.
 STRIP_WIDTH = round(CANVAS[0] * 0.88 * (1 - 2 * compositor.PAD))
 
-# MEDIAN LINE PITCH OF A REAL PRINTED CARD, as a fraction of card height. MEASURED 2026-08-15 over
-# n=40 real 2015-frame cards spanning 13-336 oracle characters (bd mtg-8h9,
-# bd mtg-8h9). Sizing the strip to this asks for a card that reads like a printed
-# one, rather than one that merely clears `compositor.RULES_MIN` — the floor is the point below
-# which a card is unusable, not the target.
-REAL_CARD_PITCH = 0.0332
-
-
-def _target_size():
-    """The em at which our text matches a real printing's line pitch.
-
-    Derived from `textlayout` rather than written down, so that if the face or the leading ever
-    changes the brief keeps asking for the right amount of room instead of quietly going stale.
-    """
-    for size in range(20, 200):
-        _, line_height, _ = textlayout.wrap(
-            textlayout.atoms("the quick brown fox"), size, STRIP_WIDTH, None
-        )
-        if line_height >= CANVAS[1] * REAL_CARD_PITCH:
-            return size
-    return 60
-
-
-TARGET_SIZE = _target_size()
+# MOVED TO `cards.textlayout` 2026-08-17, and the move is the point. This module owned the pitch
+# and used it to compute the panel height the brief asks for; `cards.compositor` had never heard of
+# it and set the text from an unrelated ceiling of its own, 2.16x larger. The brief was asking for
+# a panel sized to hold the text at 61px and then the text was set at up to 132px. Both halves of
+# one contract, each measured correctly, never introduced. They now read one number from one place.
+REAL_CARD_PITCH = textlayout.REAL_CARD_PITCH
+TARGET_SIZE = textlayout.target_size(CANVAS[1])
 
 # The demand is a rounded PERCENTAGE, not a rung off a ladder, and that is measured.
 #
@@ -463,18 +448,74 @@ STYLE_GROUPS = {
 STYLE_GROUP_OF = {key: group for group, keys in STYLE_GROUPS.items() for key in keys}
 
 
+SCREEN = re.compile(
+    r"halftone|screentone|stipp|hatch|grain|speckl|fine ink|fine pen|dots|printed-\w+ texture",
+    re.IGNORECASE,
+)
+"""Styles whose text names a printed screen or a per-mark texture.
+
+DERIVED AND NOT LISTED, so a style added later with "halftone" in it is covered without anyone
+remembering to. Matches 10 of the 48 as written: sketch, ink_drawing, comic_book, manga,
+lovecraftian, fairy_tale, moebius, propaganda_poster, alphonse_mucha, tarot_card.
+
+Deliberately NOT matching a bare "texture": `expressionism`'s "raw texture" and `grimdark`'s mud and
+rust are brushwork, not a screen, and `low_poly` is flat facets by definition. Those three have no
+per-mark grid to size, and bd mtg-z12 says naming one is how they acquire one. `printed-<thing>
+texture` is in because a printed poster or plate does have a grid that can go per-pixel.
+"""
+
+COARSE = (
+    " HOW MUCH of the picture those marks cover, and this decides whether the card looks "
+    "professional or cheap: MOST of it carries NONE. Every lit and mid-tone area is FLAT, "
+    "unmodulated colour — one clean colour filling the shape, with no hatching, no dots, no "
+    "stipple, no screen and no grain laid over it. The marks live ONLY inside the shadow shapes, "
+    "and those shadows are themselves clean-edged shapes rather than a wash of texture. Where marks "
+    "do go they are coarse and open, several pixels apart on this canvas, with flat colour showing "
+    "between them. Read the card at 63 by 88 millimetres: big flat shapes held by confident "
+    "outlines, a few dense shadow passages, and clean unmarked colour over most of the area. An even "
+    "field of fine marks across the whole picture is the failure."
+)
+"""Appended to a style that names a screen, at the point the style enters the brief.
+
+MEASURED 2026-08-17, and the first two attempts at this clause BOTH FAILED, which is why it is
+worded the way it is. Art-zone edge energy at 1:1, against the reference site's 8.0-21.6 across all
+eighteen of their stored cards:
+
+    45.9   original brief
+    40.1   the scale rule written into `QUALITY`
+    42.7   the same scale rule attached here, next to the style text
+
+Both moves are inside generation-to-generation noise. The scale rule was simply the wrong rule. Their
+own comic-style card (Agate Instigator, 15.5) at native pixels is FLAT UNMODULATED COLOUR inside heavy
+clean outlines — no hatching, no halftone, no stipple anywhere in it, shading done as one or two flat
+steps. The gap was never how big our marks are, it is that ours cover every surface and theirs cover
+almost none. So this asks for flat fills and confines marks to the shadow shapes.
+
+Post-processing was measured and rejected on the same day: a 5px median on the finished blank lands
+1:1 at 18.1 with a 3.4x climb, dead in the reference band, and visibly smears the tusk edge and the
+eye. Smoothing a hatched picture gives a smudged hatched picture, not a flat-shaped one — the metric
+moves and the card gets worse.
+
+Attached to the style rather than editing the 10 strings, because the client chose those styles by
+name and "pen and ink drawing" has to keep saying stippling. Only on the styles that already name a
+screen: bd mtg-z12's finding is that naming an object summons it, so telling an oil painting how to
+place its halftone is how an oil painting acquires one.
+"""
+
+
 def _style_text(style):
     """A style key, a style label, or free text -> the attributes to paint from.
 
     Anything unrecognised passes through verbatim, which is exactly what the "Custom Art Style"
-    free-text field needs, so the fallback is a feature rather than a gap.
+    free-text field needs, so the fallback is a feature rather than a gap. The coarse-screen clause
+    rides on free text too, and deliberately: a user typing "halftone comic" has asked for the same
+    thing by hand.
     """
     if not style:
         return None
     key = str(style).strip()
-    if key in STYLES:
-        return STYLES[key]
-    return STYLES.get(_BY_LABEL.get(key.lower(), ""), key)
+    text = STYLES.get(key) or STYLES.get(_BY_LABEL.get(key.lower(), ""), key)
+    return text + COARSE if SCREEN.search(text) else text
 
 
 # The other two option groups, `art_direction` (21) and `color_palette` (20), EXTRACTED VERBATIM
@@ -637,6 +678,33 @@ QUALITY = (
     "Keep the background quieter and less saturated than the subject so the card's colour reads "
     "hot against it. Dense detail where the eye lands. Finished collectible-card artwork, not a "
     "sketch and not an empty backdrop."
+    # MEASURED 2026-08-17 against all eighteen stored reference-site cards, as edge energy in the
+    # art zone at four spatial scales. Theirs RISES steeply with scale — Craterhoof 14.7 at 1:1
+    # against 55.2 at 1:8, a 3.8x climb, which is a picture built out of big shapes. Ours is FLAT:
+    # 45.9 at 1:1 against 55.4 at 1:8, a 1.2x climb. Identical composition energy, 3.1x their
+    # pixel-scale energy. Their whole eighteen-card range at 1:1 is 8.0 to 21.6, spanning pixel art
+    # and painterly alike; our three cards are 20.6, 27.2 and 45.9.
+    #
+    # The cause is that nothing in the brief ever said this canvas is a CARD. Twelve of the style
+    # strings ask for halftone dots, screentone, stippling or dense cross-hatching — the client
+    # picked those, they stay — and at 1792x2400 the model lays that screen down per pixel. A
+    # halftone dot is a physical printing artefact around 100 lines per inch; on a 63mm card at this
+    # resolution one dot is 5-7px, and rendered at 1px it stops being a print texture and becomes
+    # grit over the whole card. That grit is what makes composited type read as pasted on, no matter
+    # how the type itself is drawn — measured: our text stack and theirs are the same to within a
+    # few values.
+    # The texture-SCALE half of this moved to `COARSE`, which rides on the style string itself —
+    # here it was too far from the medium instruction to win, measured at a 13% move. What stays is
+    # the part that is not about any style's marks: how the picture reads as a whole.
+    #
+    # MEASURED 2026-08-17 as edge energy in the art zone at four spatial scales. The reference
+    # site's eighteen cards CLIMB with scale — Craterhoof 14.7 at 1:1 against 55.2 at 1:8, 3.8x —
+    # which is a picture built out of big shapes. Ours is FLAT: 46.4 against 57.2, 1.2x. Identical
+    # composition energy, 3.1x their pixel-scale energy, and that grit is what makes composited
+    # type read as pasted on however the type itself is drawn.
+    " Read the picture at card size, 63 by 88 millimetres: it has to resolve into big clear shapes "
+    "with calm, unbroken areas between them. Detail belongs where the eye lands and nowhere else — "
+    "an even field of fine detail across the whole card is the one thing that makes it look cheap."
 )
 
 # How the attached official art is allowed to be used, shared by both modes so there is one
@@ -909,9 +977,183 @@ def _palette(color_identity, strict=False):
     )
 
 
+def _has_tab(face, lettered=False):
+    """Does this card need the small tab at the bottom right?
+
+    A creature's P/T and a planeswalker's loyalty sit in the same corner and no card has both.
+
+    Loyalty only counts in LETTERED mode. `cards.compositor` prints `face["power"]` and nothing
+    else, so asking for a tab on a planeswalker in composited mode paints a surface nothing goes
+    on — which is `blank_surface`, the exact defect bd mtg-m8q closed.
+    """
+    return face.get("power") is not None or (lettered and face.get("loyalty") is not None)
+
+
+def _writing_ban(borderless, lettered):
+    """The last sentence of the brief, and its last place is measured — see the call site.
+
+    INVERTED, NOT DELETED, when the model letters the card itself. The ban's job was never "no
+    text"; it was "no text WE did not author", because a fabricated subtype in the right font is
+    invisible (`creative_full`'s own docstring: Swords to Plowshares printed `Instant — <runic
+    script>`). In lettered mode the given strings become a whitelist and everything else stays
+    banned, so the clause keeps both its position and its force.
+    """
+    elsewhere = "not the scene" if borderless else "not the edge material"
+    if lettered:
+        return (
+            "ABSOLUTE REQUIREMENT, overriding everything above: the ONLY writing anywhere on this "
+            "image is the exact strings given at the top, each in its stated place and each "
+            f"exactly once. Nothing else carries a mark of any kind — not the artwork, {elsewhere}"
+            ", not the gaps between the surfaces, and not the unused part of any surface. No "
+            "extra words, no invented names, no flavour text, no artist credit, no collector "
+            "number, no copyright line, no glyphs, no decorative script, no fake writing, no "
+            "watermark, no emblem, no set symbol, AND NO MANA SYMBOLS — the mana cost is not one "
+            "of the strings above and is not yours to paint. Every part of every surface that is "
+            "not carrying one of those strings is bare stone, bare wood, bare metal — blank."
+        )
+    in_art = "not anywhere in the artwork" if borderless else "not on the edge material"
+    return (
+        "ABSOLUTE REQUIREMENT, overriding everything above: there is NO WRITING ANYWHERE ON THIS "
+        f"IMAGE — not on the raised surfaces, {in_art}, and not in the gaps between them. Every "
+        "raised surface is bare stone, bare wood, bare metal — blank. No letters, no words, no "
+        "names, no titles, no numbers, no glyphs, no decorative script, no fake writing, no "
+        "watermark, no emblem, no mana symbols, no set symbol. If you are tempted to label a "
+        "surface or carve script into it, leave it empty instead. Real text is printed onto these "
+        "surfaces afterwards and anything you paint on them will collide with it."
+    )
+
+
+CARD_ASPECT = 2400 / 1792
+"""Our canvas, height over width. Identical to the reference site's — see `creative_full`."""
+
+TITLE_PLATE_WIDTH = 0.85
+"""How much of the card's width a full-bleed title plate spans.
+
+The brief asks for a plate "NARROWER than the card, its ends stopping well short of both side
+edges". MEASURED across the 25 lettered generations: 0.80-0.88. Only used to turn the compositor's
+pip size into a share of the PLATE, which is the only unit the model can be asked to reserve in.
+"""
+
+COST_ROOM_MIN, COST_ROOM_MAX = 0.12, 0.70
+"""Floor and ceiling on the reserved end.
+
+The floor keeps a one-pip card from setting its name flush against the pip. The ceiling is where
+a ten-pip cost stops being worth the whole plate — `Progenitus` computes 0.65 and fits under it,
+so nothing measured is currently clamped; above it the pips would be stamped over the tail of a
+name painted into the space they need.
+"""
+
+
+def _cost_room(tokens):
+    """Share of the top plate's width this cost needs, as the brief has to state it.
+
+    Derived from the compositor's own constants rather than guessed, so the two cannot drift: it
+    stamps each pip at `NAME_CARD_SIZE * 0.92` of the card's HEIGHT and spaces them a tenth of a
+    pip apart (`compositor._title`), which on our canvas is ~6% of the plate per pip. The extra 4%
+    is the gap between the name and the first pip.
+    """
+    per_pip = 1.10 * 0.92 * compositor.NAME_CARD_SIZE * CARD_ASPECT / TITLE_PLATE_WIDTH
+    return min(COST_ROOM_MAX, max(COST_ROOM_MIN, len(tokens) * per_pip + 0.04))
+
+
+def _lettering_block(face):
+    """The card handed over as DATA, for the mode where the model letters it itself.
+
+    EXPERIMENT 2026-08-19, `Project Material/EXPERIMENT-json-lettering-2026-08-19/`. The mode this
+    brief was built for withholds the text on purpose — see the writing ban at the end — because
+    a model shown the words paints the words, and painted words are the AI's, not Scryfall's.
+    `HANDOVER-2026-08-09` measured a PROSE version of this over 24 generations: every field right
+    except the mana cost. JSON was the untried variable, and over the first five cards it took the
+    mana cost 5 of 5, including `{11}`, `{4}{W}` and `{T}: Add {C}{C}` inside the rules text.
+
+    What it buys is bd mtg-469: a model that letters the card sizes the panel to its own text, so
+    the whole demand-with-no-authority problem stops existing. All three wordy cards that fail
+    today (229, 281 and 323 characters) came back first try with a large readable panel.
+
+    JSON rather than prose, and the shape is the argument: a field name beside an exact string
+    is a copy instruction, while a sentence describing the same thing is a paraphrase invitation.
+
+    THE MANA COST IS NOT IN HERE, and that is the one field this mode does not hand over. It was,
+    for the first five cards, and it took all five. Over 25 it took 18 of 22, and the four failures
+    are one pattern: `Progenitus` painted 9 pips of a ten-pip cost, `Niv-Mizzet, Parun` 5 of 6,
+    `Kitchen Finks` drew hybrid `{G/W}` as two separate pips and `Birthing Pod` drew Phyrexian
+    `{G/P}` as plain green. The model letters prose and cannot count symbols past four or draw the
+    two compound pips at all — every cost of four ordinary pips or fewer came back 18 of 18.
+    `HANDOVER-2026-08-09` reached the same conclusion from a prose brief over 24 generations.
+
+    So the cost stays OURS, stamped from the 84 vendored Scryfall SVGs by `compositor` after the
+    fact, and the brief reserves the room for it instead. It is the one field where we have the
+    artwork and the model does not.
+    """
+    # A FIELD THE CARD DOES NOT HAVE IS ABSENT, never present and empty. bd mtg-m8q: a card told
+    # about a surface it does not have has been told to paint it — a blank P/T shield came back on
+    # instants and sorceries from exactly that. `""` is an instruction to print nothing somewhere,
+    # which is one more thing to get wrong than saying nothing at all. Lands have no mana cost and
+    # vanilla creatures no rules text, so this is not a rare path.
+    card = {"name": face["name"]}
+    card["type_line"] = face["type_line"]
+    if face.get("oracle_text"):
+        card["rules_text"] = face["oracle_text"]
+    if face.get("power") is not None:
+        card["power_toughness"] = f"{face['power']}/{face['toughness']}"
+    # A planeswalker's starting loyalty sits in the same corner as a creature's P/T and no card
+    # has both, so they share the tab. Without this a planeswalker prints no loyalty at all —
+    # `Jace, the Mind Sculptor` carries `loyalty: 3` and nothing else on the face names it.
+    if face.get("loyalty") is not None:
+        card["loyalty"] = str(face["loyalty"])
+    where = [
+        ('"name"', "the LEFT-HAND part of the plate across the top, left-aligned — see the "
+         "reserved end below."),
+        ('"type_line"', "the narrow strip, and NOWHERE ELSE. Printing it a second time anywhere "
+         "on the card is a failed image."),
+        ('"rules_text"', "the broad pale strip, and nowhere else. A blank line between "
+         "paragraphs; text in ( ) is reminder text and is set in italics."),
+        ('"power_toughness"', "the small tab at the bottom right."),
+        ('"loyalty"', "the small tab at the bottom right — this card's starting loyalty."),
+    ]
+    return [
+        "",
+        "THE CARD'S TEXT, as data. Every string below is EXACT. Reproduce each one CHARACTER FOR "
+        "CHARACTER — do not paraphrase, do not shorten, do not rephrase, do not invent and do not "
+        "correct anything, including punctuation and capitalisation:",
+        "",
+        json.dumps(card, indent=2, ensure_ascii=False),
+        "",
+        "WHERE EACH FIELD GOES, and each field appears EXACTLY ONCE on the card:",
+        *(f"  {name:<18} {place}" for name, place in where if name.strip('"') in card),
+        "",
+        # ONLY ON A CARD THAT HAS A COST. A land or a suspend-only card has none, and a card told
+        # to keep room for a thing it does not have has been told to paint the thing — the same
+        # bd mtg-m8q lesson that took the P/T tab and the loyalty field out of the other briefs.
+        *(
+            [
+                f"THE RIGHT-HAND {_cost_room(cost) * 100:.0f}% OF THE TOP PLATE IS RESERVED AND "
+                "STAYS COMPLETELY BARE — bare stone, bare metal, bare wood, nothing on it at all. "
+                "The name stops short of it. This card's mana cost is stamped into that space "
+                "afterwards from real Magic symbol artwork, so anything painted there collides "
+                "with it. Do NOT paint a mana cost, a mana symbol, a circle, a gem, a disc or a "
+                "boss anywhere on the top plate.",
+                "",
+            ]
+            if (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
+            else []
+        ),
+        # THE PANEL NOW SIZES ITSELF, which is the whole point of this mode (bd mtg-469). Both
+        # directions are stated because the first run only stated one: Sol Ring's sixteen
+        # characters came back in a panel covering a third of the card, because the brief said
+        # "if the text is long make it bigger" and never said the converse.
+        "SIZE THE BROAD PALE STRIP TO ITS TEXT, both ways. Long rules text gets a TALL strip and "
+        "smaller artwork, because cramped or tiny lettering makes the card unusable. Short rules "
+        "text gets a SHORT strip and bigger artwork — one line of text in a strip covering a "
+        "third of the card is just as wrong, and a strip must never be left half empty.",
+        "Set the lettering large enough to read across a table, level, correctly spelled, and in "
+        "one clean serif throughout.",
+    ]
+
+
 def creative_full(
     face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None,
-    borderless=True, corrections=(),
+    borderless=True, corrections=(), lettered=False,
 ):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
@@ -981,15 +1223,24 @@ def creative_full(
     strips = 1
 
     lines = [
-        "You are a senior Magic: The Gathering card artist.",
+        "You are a senior Magic: The Gathering card artist"
+        + (" AND its letterer." if lettered else "."),
         "",
         "Paint a COMPLETE fantasy trading card face — the artwork and the card's raised surfaces "
-        "together, as one integrated illustration, with NO writing anywhere on it.",
+        "together, as one integrated illustration, "
+        + ("with ALL of its lettering set into it." if lettered
+           else "with NO writing anywhere on it."),
         "",
         "The card:",
-        _subject(face, licensed=True),
+        # The name is WITHHELD in composited mode — briefing the card like a licensed crossover
+        # is what stops the model painting a name it was shown. In lettered mode it is shown the
+        # name anyway, to print, so withholding it from the subject line buys nothing and costs
+        # the likeness.
+        _subject(face, licensed=licensed if lettered else True),
     ]
-    if abilities:
+    if lettered:
+        lines += _lettering_block(face)
+    elif abilities:
         # Only the LENGTH, never the text: the model paints any rules text it is shown, and
         # Atraxa came back fully lettered from exactly this line's predecessor.
         total_chars = sum(len(paragraph) for paragraph in abilities)
@@ -1062,19 +1313,29 @@ def creative_full(
     # are now stated as coordinates taken off the reference site's own cards (see STRIP_FOOT), so
     # a taller strip grows UPWARD out of the lower third instead of being trapped inside it.
     top = f"{(STRIP_FOOT - room[0]) * 100:.0f}%" if room else "60%"
-    band = (
-        f"ONE broad pale strip low on the card, its foot about {STRIP_FOOT * 100:.0f}% of the way "
-        f"down and its top edge about {top} of the way down, with painted scene continuing below "
-        "it to the bottom edge, "
-        + (
+    # WHO DECIDES THE HEIGHT. In lettered mode the model has the text itself and sizes the strip
+    # to it — that is the whole reason the mode is worth having (bd mtg-469), and stating a
+    # fraction here as well would put a second, weaker authority against the text it can see.
+    if lettered:
+        how_tall = (
+            "sized to the rules text given above as stated there — its FLAT PALE FACE, the clear "
+            "even area measured inside its rim and NOT counting the curled rods, carved ends, "
+            "torn edges or anything crossing it, is what has to hold that text at a readable size"
+        )
+    elif room:
+        how_tall = (
             f"so that its FLAT PALE FACE is AT LEAST {room[1]} of the card's height — that is the "
             "clear even area alone, measured inside its rim and NOT counting the curled rods, "
             "carved ends, torn edges or anything crossing it. This card's rules text needs "
             "exactly that much clear room to be read across a table, and a shorter face makes "
             "the card unusable, so if the ends are ornate make the whole piece bigger"
-            if room
-            else "tall enough to hold every line of text comfortably with a margin"
         )
+    else:
+        how_tall = "tall enough to hold every line of text comfortably with a margin"
+    band = (
+        f"ONE broad pale strip low on the card, its foot about {STRIP_FOOT * 100:.0f}% of the way "
+        f"down and its top edge about {top} of the way down, with painted scene continuing below "
+        "it to the bottom edge, " + how_tall
         + ". This is the single most important surface on the card: it must not be cramped, and "
         "nothing else may crowd it"
     )
@@ -1098,7 +1359,7 @@ def creative_full(
         )
     else:
         surfaces.append(band)
-    if face.get("power") is not None:
+    if _has_tab(face, lettered):
         # MEASURED 2026-08-16 across 18 full-res CREATURE cards from their gallery
         # (Project Material/evidence-reference-frames-2026-08-16/): rounded rectangle or tab 11,
         # disc 2, bare-on-the-art or an irregular blob 3, SHIELD 2. Shield is 11% of the reference
@@ -1133,8 +1394,11 @@ def creative_full(
             "where the scene is stone, a river pebble by water, a torn tag or a hanging seal "
             "where there is cloth, a beaten plate among metal, a knot of wood in a forest, a "
             "disc, a rounded tab. Its face is flat, even, BARE MATERIAL and wide enough to hold "
-            "two characters side by side — the value goes on it afterwards, so it is left as "
-            "plain stone, plain wood, plain metal with nothing cut or carved into it"
+            "two characters side by side"
+            + (" and carries the power/toughness and nothing else" if lettered
+               else " — the value goes on it afterwards")
+            + ", so it is left as plain stone, plain wood, plain metal with nothing cut or "
+            "carved into it"
         )
     total = len(surfaces)
     if borderless:
@@ -1155,10 +1419,51 @@ def creative_full(
             "bottom edge and both side edges is scene — sky, rock, smoke, water, foliage, cloth, "
             "distance — carrying straight off the image the way a photograph does. All four "
             "corners are painted scene too.",
-            "Nothing surrounds the picture and nothing encloses it. No rim, no band, no margin, "
-            "no outline, no strip of material, no beading and no line of any kind runs around the "
-            "outside, and there is no white or black edge anywhere. The artwork is not set inside "
-            "anything and is not a picture with a surround: it IS the card, all the way out.",
+            # MEASURED 2026-08-17, bd mtg-w31: 2 of 74 stored cards came back with paper-white
+            # ARCS at all four corners — the model painting a rounded card standing on a white
+            # ground rather than an image that IS the card. The straight edges bled correctly on
+            # both; only the corners failed, so "all four corners are painted scene too" was
+            # obeyed everywhere except where the model's own idea of a card's SHAPE overrode it.
+            #
+            # The sentence above says what to paint at the corners. This one says what the image
+            # is NOT, because the fault is not a missing instruction about scene — it is a strong
+            # prior about card-shaped objects, and that prior has to be named to be displaced.
+            # Same mechanism as the P/T shield, which took three rewordings until the shape itself
+            # was addressed rather than the field.
+            "This image is NOT a photograph of a card and not a card lying on a surface. The card "
+            "has no silhouette of its own here: no rounded corners, no cut edge, no drop shadow, "
+            "no background behind it. The image is rectangular and the scene reaches every one of "
+            "its four corners, right into the corner pixel.",
+            # RELAXED 2026-08-17. The ban used to read "no rim, no band, no margin, no outline, no
+            # strip of material, no beading and no line of any kind runs around the outside".
+            #
+            # MEASURED against the reference site the same day
+            # (Project Material/evidence-reference-edges-2026-08-17/): 40 of their full-resolution
+            # cards, 34 of which bleed to the corner with EXACTLY zero white, and every one of the
+            # twelve inspected carries a decorative edge built from the scene's own material —
+            # runic borders, vines, ornate metal, chains. Their bundle has no borderless option at
+            # all, so that edge is not something they switch off; it is how the boundary gets
+            # resolved. The model is never asked to make painted scene meet a corner unaided.
+            #
+            # We were banning the thing that does the work. The distinction that matters is
+            # ENCLOSURE, not material: a mat stops the art, and scene material crossing the edge
+            # carries it off. So the ban keeps every word about margins, borders and flat bands,
+            # and stops forbidding the scene's own substance from reaching the trim.
+            # The noun itself still stays out, in both halves of this — mtg-z12 measured that
+            # naming the object summons it, and `test_full_bleed_is_asked_for_positively_before_
+            # it_is_banned` guards the whole list. A first draft of this relaxation reintroduced
+            # it twice and the test caught it.
+            "Nothing surrounds the picture and nothing encloses it. No mat, no margin, no "
+            "surround, no outline, no beading, no flat band of colour and no drawn line runs "
+            "around the outside, and there is no white or black edge anywhere. The artwork is not "
+            "set inside anything and is not a picture with a surround: it IS the card, all the "
+            "way out.",
+            "Things made of the scene MAY reach the edge and should — a branch, a chain, a curl "
+            "of stone, carved detail, a drift of smoke. Each one is part of the world, lit by "
+            "this scene's light, and it CARRIES OFF the edge rather than turning to run along it. "
+            "Material crossing an edge and leaving is scene; the same material bent to follow all "
+            "four sides has stopped being scene and closed the picture in, which is the one thing "
+            "it must never do.",
             # MEASURED 2026-08-13, first generation under this brief: the model obeyed "full bleed"
             # and still built a card, by painting a riveted steel band across the top tenth and
             # insetting the picture in a rectangular window below it. That is bd mtg-9pi's "art in
@@ -1328,8 +1633,23 @@ def creative_full(
         # float their banner just inside the top with art visible above it.
         + ("sits inside its top tenth" if borderless else "touches its upper edge")
         + "; the narrow strip is below the picture; the broad pale strip is below the narrow "
-        "strip; the shield, if there is one, is at the bottom right. No surface may be painted "
-        "above the top plate.",
+        "strip"
+        # MEASURED 2026-08-17 over all 75 stored faces (bd mtg-m8q): Sol Ring came back with an
+        # empty metal shield at bottom-right on 2 of 2 Creative Full runs, and both graded clean.
+        # It is an artifact, so nothing is printed into it and it ships blank — card 03 of the
+        # 2026-08-16 sign-off pack.
+        #
+        # This sentence is why. It named a FOURTH surface immediately after "Paint exactly these 3
+        # raised surfaces and no others", and it named it "shield" — the one word the P/T clause
+        # 200 lines above spends twenty lines removing, because naming a shape pins it (bd
+        # mtg-z12, and the reference gallery is 11% shields against our 100%). "If there is one"
+        # was doing no work: the model has no way to know whether there is one, and the clause
+        # that would have told it is the clause we skipped.
+        #
+        # So it is now said only on the cards that have one, in the same words the P/T clause uses.
+        # The gate in `check.inspect` stays as the backstop — this is the cause, not a guarantee.
+        + ("; the tab is at the bottom right" if _has_tab(face, lettered) else "")
+        + ". No surface may be painted above the top plate.",
         # CLIENT 2026-08-13, circling the second dark strip under Raphael's type line: "on one of
         # them it has 2 creature type text boxes, here it looks kind of natural but i have seen
         # these as errors many times". That card came back with two narrow strips; we printed the
@@ -1354,8 +1674,8 @@ def creative_full(
         # from the pixels, so the value split costs nothing on our side and is pure gain.
         "VALUE, and getting this wrong is what makes a card read as a mock-up:",
         "The top plate and the narrow strip are DARK — near-black obsidian, blackened iron, "
-        "deep oxblood, weathered bronze — because warm gold lettering is printed on them "
-        "afterwards.",
+        "deep oxblood, weathered bronze — because warm gold lettering "
+        + ("goes on them." if lettered else "is printed on them afterwards."),
         # CLIENT 2026-08-16: "some P/T are large some small and small pure black dull ugly".
         #
         # This paragraph governed three surfaces and left the tab — the fourth display surface —
@@ -1370,10 +1690,20 @@ def creative_full(
         # parchment. The tab has no such freedom: every Magic card ever printed sets its P/T as
         # light numerals on a dark plate. So its value is pinned like the other two display
         # surfaces, and the compositor needs no change — panel_palette picks gold on its own.
-        "The tab at the bottom right is DARK too, the same family as the top plate — dark stone, "
-        "blackened metal, dark wood, dark horn — because warm gold numerals are printed on it "
-        "afterwards. A pale tab makes those numerals flat black on pale rock, which is the one "
-        "part of the card that then looks unfinished.",
+        # Only on a card that HAS one. bd mtg-m8q: this was the second of two places describing
+        # the tab to every card regardless, and a card told what colour to paint a surface has
+        # been told to paint it. See the order clause above for the measurement.
+        *(
+            [
+                "The tab at the bottom right is DARK too, the same family as the top plate — dark "
+                "stone, blackened metal, dark wood, dark horn — because warm gold numerals "
+                + ("go on it." if lettered else "are printed on it afterwards.")
+                + " A pale tab makes those numerals flat black on pale rock, which is the one "
+                "part of the card that then looks unfinished."
+            ]
+            if _has_tab(face, lettered)
+            else []
+        ),
         # "Glowing amber stone" used to be in this list and is now excluded by name. MEASURED on
         # the eight-card Ice batch, job 10746c0b: it was the only MID-value entry among otherwise
         # pale materials, and on red and green cards the model reached for it because it matched
@@ -1382,8 +1712,9 @@ def creative_full(
         # every structural check we had. `check.contrast` now enforces the floor; this stops the
         # brief asking for the thing that breaks it.
         "The broad strip is LIGHT AND PALE — warm cream parchment, bleached bone, aged ivory, "
-        "weathered chalk. Near-black lettering is printed on it afterwards, so it has to be pale "
-        "enough to read that text: think the palest thing in the picture, not a mid-tone. Even on "
+        "weathered chalk. Near-black lettering "
+        + ("goes on it" if lettered else "is printed on it afterwards")
+        + ", so it has to be pale enough to read that text: think the palest thing in the picture, not a mid-tone. Even on "
         "a night scene or a lava scene it stays pale — a lava card gets a bone-coloured slab lit "
         "warm, NOT a slab made of lava. If in doubt, make it paler.",
         "Dark, dark, then light going down the card. Do not paint all three the same value.",
@@ -1401,6 +1732,30 @@ def creative_full(
         "chipped or torn ends, a notched corner, a curled rod at each end of a scroll, a rim "
         "that thickens and thins. But the long upper and lower edges of each surface stay "
         "roughly straight and level, because straight lines of text are printed across them.",
+        # NOT A NEW RULE. `_overlap` already says "each crossing stays at that surface's OUTER EDGE
+        # or over one of its corners: the broad flat middle of every surface stays completely clear
+        # and unbroken". This restates the second half of that as a flat prohibition, where the
+        # surfaces are described, because inside the overlap block it is the qualifier on an
+        # instruction to ADD crossings and it measurably loses to it.
+        #
+        # MEASURED 2026-08-17. On none of the eighteen stored reference-site cards does anything from
+        # the scene cross the face of a text panel — vines, branches, rigging and cabling wrap the
+        # outside of the rim and stop. Ours paints them over the parchment on 2 of 3: 9.1% of
+        # Craterhoof's face, 18.6% of Terror's, and the words then land on top of a branch. That is
+        # the loudest "text pasted on afterwards" signal on the card, and it is the fault
+        # `check.obstructed` now refuses, so the brief has to ask for it rather than leave the gate to
+        # discover it and spend a credit repainting.
+        #
+        # Aimed at the FACE and not the silhouette: a carved, notched, torn outline is what keeps the
+        # panel part of the world, and the clause above is not being walked back. "border" is banned
+        # from this brief — bd mtg-z12, naming the object summons it — so this is written against the
+        # rim and the ends, and `test_prompts` caught the first draft for using it.
+        "So, to be exact about where a crossing may go: the FLAT FACE of each raised surface is "
+        "completely bare. Vines, branches, roots, chains, ropes, rigging, cabling, spatter and "
+        "drifting debris wrap its rim, hook over its carved ends, tuck in behind it or stop dead at "
+        "its edge — and not one of them travels across the clear middle. Nothing whatever is painted "
+        "on the area where the text goes: that is the surface's own material and light and nothing "
+        "else.",
         "",
         # MEASURED 2026-08-10, first three generations: the slab came back eating ~40% of the card
         # on all three and the narrow strip was omitted on all three. The art has to be told it
@@ -1462,15 +1817,7 @@ def creative_full(
         # separately because it is new and because carved runes along a border are exactly the
         # decoration a model reaches for — Twinflame Tyrant on their own site has painted fake
         # runes sitting beside its real composited rules text.
-        "ABSOLUTE REQUIREMENT, overriding everything above: there is NO WRITING ANYWHERE ON THIS "
-        "IMAGE — not on the raised surfaces, "
-        + ("not anywhere in the artwork" if borderless else "not on the edge material")
-        + ", and not in the gaps between them. Every raised surface is bare stone, bare wood, "
-        "bare metal — blank. No letters, no words, no names, no titles, no numbers, no glyphs, no "
-        "decorative script, no fake writing, no watermark, no emblem, no mana symbols, no set "
-        "symbol. If you are tempted to label a surface or carve script into it, leave it empty "
-        "instead. Real text is printed onto these surfaces afterwards and anything you paint on "
-        "them will collide with it.",
+        _writing_ban(borderless, lettered),
         # CLIENT 2026-08-13, circling the swirl beside the reference site's own type line: "these
         # are set symbols, to know which set the cards from, but these are proxies that dont have
         # a set so its just a random symbol and actually sometimes ive seen it put a real symbol
@@ -1630,17 +1977,28 @@ def creative_full(
     # Placed last among the late clauses, and still before the lettering ban, whose final position
     # is measured.
     if corrections:
-        before_the_writing_ban(
-            "AND, MOST IMPORTANTLY: your previous attempt at this exact card was REJECTED and is "
-            "being repainted. What was wrong with it: "
-            + "; ".join(corrections)
-            + ". Fix precisely that. Everything else about the brief is unchanged, so do not "
-            "start over from a different idea — paint this card again, correctly."
-        )
+        before_the_writing_ban(_repaint_clause(corrections))
     return "\n".join(lines)
 
 
-def art_only(face, style=None, reference=True, licensed=False, direction=None, palette=None):
+def _repaint_clause(corrections):
+    """Why this attempt is a repaint, in the grader's own words.
+
+    Shared by both briefs so the sentence cannot drift between them: Art Only got the same
+    paint-grade-repaint loop on 2026-08-19 (bd mtg-l4x) and it repaints for the same two faults
+    Creative Full does, `matted` and `colour_identity`.
+    """
+    return (
+        "AND, MOST IMPORTANTLY: your previous attempt at this exact card was REJECTED and is "
+        "being repainted. What was wrong with it: "
+        + "; ".join(corrections)
+        + ". Fix precisely that. Everything else about the brief is unchanged, so do not "
+        "start over from a different idea — paint this card again, correctly."
+    )
+
+
+def art_only(face, style=None, reference=True, licensed=False, direction=None, palette=None,
+             corrections=()):
     """The Art Only brief for one face (`cards.scryfall.faces()` produces the face).
 
     `style` is the user's chosen look. A label in `STYLES` expands into its attributes; anything
@@ -1696,4 +2054,6 @@ def art_only(face, style=None, reference=True, licensed=False, direction=None, p
         "with the subject clear of the edges.",
         f"Paint the art and nothing else: {FORBIDDEN}.",
     ]
+    if corrections:
+        lines += ["", _repaint_clause(corrections)]
     return "\n".join(lines)
