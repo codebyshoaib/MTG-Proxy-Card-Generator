@@ -202,6 +202,19 @@ def wrap(lines, size, max_width, exclude=None):
     return wrapped, line_height, pip_px
 
 
+def _descending(max_size, min_size):
+    """Sizes to try, largest first, and ALWAYS at least one.
+
+    `range(max_size, min_size - 1, -1)` is EMPTY when the ceiling is below the floor, and both
+    fitters below then returned None — against their own contract, which promises a `min_size`
+    fallback that overflows rather than a failure. Latent until 2026-08-17, when
+    `compositor.RULES_SIZE` came down from an unmeasured 0.055 to the measured target and a small
+    test canvas put a ceiling under 13 for the first time. On a real 2400px card the ceiling is 61
+    and this clamp never fires.
+    """
+    return range(max(int(max_size), int(min_size)), int(min_size) - 1, -1)
+
+
 def fit(text, box_width, box_height, max_size, min_size=13, exclude=None):
     """Largest size at which `text` wraps inside the box. Returns (size, lines, lh, pip_px).
 
@@ -211,7 +224,7 @@ def fit(text, box_width, box_height, max_size, min_size=13, exclude=None):
     """
     logical = atoms(text)
     smallest = None
-    for size in range(int(max_size), int(min_size) - 1, -1):
+    for size in _descending(max_size, min_size):
         wrapped, lh, pip_px = wrap(logical, size, box_width, exclude)
         smallest = (size, wrapped, lh, pip_px)
         if block_height(wrapped, lh) <= box_height:
@@ -249,7 +262,7 @@ def fit_across(paragraphs, boxes, max_size, min_size=13, excludes=None, flavours
     ]
     excludes = list(excludes or [None] * len(paragraphs))
     smallest = None
-    for size in range(int(max_size), int(min_size) - 1, -1):
+    for size in _descending(max_size, min_size):
         laid, fits = [], True
         for lines, (width, height), exclude, scale in zip(logical, boxes, excludes, scales):
             drawn = max(1, round(size * scale))
@@ -261,3 +274,37 @@ def fit_across(paragraphs, boxes, max_size, min_size=13, excludes=None, flavours
         if fits:
             return smallest
     return smallest
+
+
+# MEDIAN LINE PITCH OF A REAL PRINTED CARD, as a fraction of card height. MEASURED 2026-08-15 over
+# n=40 real 2015-frame cards spanning 13-336 oracle characters (bd mtg-8h9).
+#
+# IT LIVES HERE BECAUSE TWO MODULES HAVE TO AGREE ON IT, and until 2026-08-17 they did not.
+# `generation.prompts` owned it and used it to compute the panel height the brief asks the model
+# for. `cards.compositor` never saw it: its own ceiling, RULES_SIZE, was an unrelated 0.055, so the
+# brief asked for a panel sized to hold this card's text at 61px and the compositor then set that
+# text at up to 132px — 2.16x the size the panel was requested for.
+#
+# MEASURED 2026-08-17 on the three-card composited regression run, exactly:
+#
+#   Sol Ring      132px   1 line    35% panel fill, 33.8% margins   <- pinned at the ceiling
+#   Craterhoof     68px   5 lines   90% fill
+#   Terror         53px   6 lines   85% fill                        <- could not reach the ceiling
+#
+# A 2.5x swing in body type across three cards of one deck, which is what reads as amateur however
+# good the art is. Both halves were measured correctly on their own; nothing connected them.
+REAL_CARD_PITCH = 0.0332
+
+
+def target_size(card_height, pitch=REAL_CARD_PITCH):
+    """The em at which our text matches a real printing's line pitch on a card this tall.
+
+    Derived from `wrap` rather than written down, so if the face or the leading ever changes both
+    the brief and the compositor keep asking for the right thing instead of quietly going stale.
+    Independent of the measure — line height is a font metric — verified at 800/1200/1451/1600px.
+    """
+    for size in range(20, 200):
+        _, line_height, _ = wrap(atoms("the quick brown fox"), size, 1200, None)
+        if line_height >= card_height * pitch:
+            return size
+    return 60
