@@ -12,6 +12,7 @@ Every option is named for the reference site's own POST /api/ai-proxies/generate
 frontend or an API layer maps one-to-one with no translation table in between.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -59,13 +60,25 @@ class Command(BaseCommand):
             help="Composite onto this existing empty-furniture PNG instead of generating one.",
         )
         parser.add_argument(
+            "--panels", dest="panel_boxes", default=None, type=Path,
+            help="Reuse the boxes in this <stem>-panels.json instead of asking for them again. "
+                 "With --from this costs NOTHING and is fully deterministic, so a compositor "
+                 "change can be measured on stored art without a detection change confounding it.",
+        )
+        parser.add_argument(
             "--boxes", action="store_true",
             help="Also write a copy with the detected boxes outlined, to check the detector.",
+        )
+        parser.add_argument(
+            "--lettered", action="store_true",
+            help="The model letters the card itself and only the mana cost is composited. Graded "
+                 "field by field against Scryfall by `check.proofread` — on trial, not the "
+                 "default. The HTTP API does not accept this.",
         )
 
     def handle(
         self, card, style, out, source, boxes, direction, palette, notes, flavor,
-        use_reference, attempts, borderless, **_,
+        use_reference, attempts, borderless, lettered, panel_boxes, **_,
     ):
         try:
             faces = pipeline.faces_of(card)
@@ -75,7 +88,7 @@ class Command(BaseCommand):
         options = pipeline.Options(
             art_style=style, art_direction=direction, color_palette=palette, custom_art_notes=notes,
             include_flavor_text=flavor, use_original_art_reference=use_reference,
-            borderless=borderless,
+            borderless=borderless, lettered=lettered,
         )
         out.mkdir(parents=True, exist_ok=True)
         for face in faces:
@@ -86,10 +99,20 @@ class Command(BaseCommand):
                 face, options,
                 attempts=attempts,
                 source=source.read_bytes() if source else None,
+                panel_boxes=json.loads(panel_boxes.read_text()) if panel_boxes else None,
                 note=lambda message: self.stdout.write(self.style.WARNING(f"  {message}")),
             )
+            # THE ART AND THE BOXES, ALWAYS, not only when the card came back faulty. Together they
+            # are everything the compositor was given, so a later compositor change re-runs on them
+            # offline for nothing: `--from <stem>-blank.png --panels <stem>-panels.json`. Kept
+            # unconditionally here and not in `jobs`, where a 9MB blank per face is a real cost and
+            # a clean card has nothing to investigate — a CLI run is somebody deliberately looking.
             if result.blank:
                 (out / f"{stem}-blank.png").write_bytes(result.blank)
+            if result.detected:
+                (out / f"{stem}-panels.json").write_text(
+                    json.dumps(result.detected, indent=2, sort_keys=True)
+                )
 
             # Where, not just whether. Across a batch the failure that matters is a surface
             # landing in the wrong place, and that is invisible in a list of keys.
