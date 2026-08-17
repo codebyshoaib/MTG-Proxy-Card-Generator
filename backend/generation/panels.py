@@ -138,8 +138,18 @@ Then report two kinds of DEFECT, each as a list of boxes, empty if the card has 
   is texture, grain or a crack.
 
 Give the INNER usable area of each surface — the flat part text can sit on, inside its carved
-rim and clear of any chipped or curled ends, not including the rim itself. Where something from
-the artwork crosses in FRONT of a surface, keep that out of the box as well.
+rim and clear of any chipped or curled ends, not including the rim itself.
+
+Make it the LARGEST rectangle that fits inside that flat part. Do not report a cautious box
+tucked well inside the surface: every bit of width left out is width the text cannot use, and
+text set into two thirds of a panel leaves the rest of it standing visibly empty. Push all four
+edges out to where the flat face actually stops.
+
+A THIN thing crossing in FRONT of the face does not clip the box — a vine, a root, a chain, a
+wingtip, a curl of smoke. The face runs on behind it and comes out the other side, so keep that
+part IN. What clips the box is where the flat face itself ENDS: its rim, a curled rod, a torn or
+chipped corner, a raised tab sitting over one of its ends, or a solid mass covering the face
+right through to its edge.
 
 Omit a key entirely if that surface genuinely is not present on this card. Do not guess, and do
 not report a region of the artwork, or the card's edge decoration, as a surface."""
@@ -158,6 +168,126 @@ printed on, INSIDE any raised rim, not the tab's outer silhouette. The rim is of
 and printing on it is exactly the mistake to avoid.
 
 If the second image shows no such tab at all, omit "pt_detail"."""
+
+
+SURFACES = ("title_plate", "type_strip", "rules_panel", "tab", "artwork", "edge", "other")
+"""Where a patch of writing sits, as the read-back is allowed to answer.
+
+An enum rather than free text so `check.proofread` can group by surface without parsing prose.
+"""
+
+READ_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the plate across the top"},
+        # The mana cost is stamped against the plate's right end, so the one thing it can collide
+        # with is the name the model lettered on the same plate. Asked for here rather than
+        # inferred, because inferring it means guessing at a font we did not choose.
+        "name": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the card's name lettering"},
+        "rules": {
+            "type": "array",
+            "items": BOX,
+            "description": "one [ymin, xmin, ymax, xmax] per pale text strip, top to bottom",
+        },
+        "text": {
+            "type": "array",
+            "description": "every separate patch of writing on the card",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "where": {"type": "string", "enum": list(SURFACES)},
+                    "text": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+READ_PROMPT = """This is a finished fantasy trading card. Unlike a blank, it HAS writing on it.
+
+Two jobs.
+
+FIRST, transcribe. Find every separate patch of writing anywhere on this card and report it in
+"text", one entry per patch. For each one give:
+
+- "text": exactly what it says, CHARACTER FOR CHARACTER. Transcribe what is actually printed, not
+  what you expect a card like this to say. Do not correct spelling, do not expand abbreviations,
+  do not tidy punctuation, and do not fill in a word you cannot read — if a word is obscured or
+  illegible, write it as [?]. Keep line breaks out: run each patch together as one line.
+  Write any mana, tap or loyalty symbol in brace notation — {T}, {G}, {2}, {G/W} — one pair of
+  braces per symbol drawn, and if a symbol is drawn that you cannot name write {?}.
+- "where": which surface it sits on, one of:
+    title_plate  the plate across the very top
+    type_strip   the narrow horizontal strip lower down
+    rules_panel  the broad pale strip holding body text
+    tab          the small raised tab near the bottom-right corner
+    artwork      painted into the scene itself
+    edge         on the card's outer decorated edge
+    other        any other surface
+
+Report EVERY patch, including runes, rune-like scratches, carved script, a signature, a set or
+expansion symbol, a collector number and a copyright line. If a surface carries writing twice,
+that is two entries. Do not merge writing from two different surfaces into one entry.
+
+SECOND, report the bounding box of two surfaces, as [ymin, xmin, ymax, xmax] normalised 0-1000:
+
+- "title": the plate across the very top, the one the card's name is printed on. Give the plate's
+  FULL extent from its left end to its right end, inside its carved rim or riveted border. If a
+  branch, chain or creature crosses in FRONT of part of the plate, the plate still runs behind it
+  — keep that part IN the box. What must stay OUT is anything past where the plate itself stops.
+- "name": the box of the card's NAME as it is lettered on that plate — the printed letters only,
+  from the first letter to the last, not the whole plate.
+- "rules": a LIST, one box per pale body-text strip, top to bottom. Give the INNER usable area —
+  the flat part the text sits on, inside any rim and clear of anything crossing in front of it."""
+
+
+def read_back(png, face):
+    """What does this card ACTUALLY say, plus the boxes we still print into.
+
+    THE GATE THE LETTERED MODE CANNOT SHIP WITHOUT. `check.py` opens by saying it deliberately does
+    not proofread, because compositing made the wording correct by construction. Let the model
+    letter the card and that guarantee is gone, and `CLAUDE.md`'s surviving rule is the one it
+    breaks: a card whose printed text differs from Scryfall must never ship silently. Measured over
+    25 lettered generations, the existing structural gates passed 23 and were blind to every text
+    defect in the batch — runes flanking a type line, a chain obscuring four words of rules text, a
+    name clipped by its own plate.
+
+    ONE call, replacing `detect` rather than adding to it, so the mode costs the same two calls a
+    composited card does. `detect` cannot be reused: its prompt opens "BLANK raised surfaces and no
+    writing on it" and its `marks` list means "any painted lettering", which on a lettered card is
+    every surface.
+
+    DELIBERATELY BLIND. The expected strings are NOT in this prompt. Handing the model what the
+    card should say and asking whether it says it is how an OCR gate learns to read the hint
+    instead of the card — and a gate that agrees with itself is worse than no gate, because it
+    ships the same defects wearing a pass. Every comparison happens in `check.proofread`, in
+    Python, against Scryfall.
+    """
+    contents = [types.Part.from_bytes(data=png, mime_type="image/png"), READ_PROMPT]
+    response = gemini.client().models.generate_content(
+        model=MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=READ_SCHEMA,
+            temperature=0,
+        ),
+    )
+    raw = json.loads(response.text or "{}")
+
+    read = {"text": [
+        {"where": patch.get("where") or "other", "text": patch.get("text") or ""}
+        for patch in (raw.get("text") or [])
+        if (patch.get("text") or "").strip()
+    ]}
+    for key in ("title", "name"):
+        box = _usable(raw.get(key))
+        if box:
+            read[key] = box
+    rules = [box for box in map(_usable, raw.get("rules") or []) if box]
+    if rules:
+        read["rules"] = sorted(rules, key=lambda box: box[1])
+    return read
 
 
 def _usable(box):
