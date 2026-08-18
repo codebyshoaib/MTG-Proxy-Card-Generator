@@ -9,7 +9,8 @@ painted, and that is what `inspect`, `contrast`, `matted` and `colour_identity` 
 
 `proofread` IS that text grader, brought back for the lettered mode where the model letters every
 field but the cost. Nothing else in this module changed: the two modes differ in which guarantee
-they buy by construction and which one has to be measured.
+they buy by construction and which one has to be measured. The one lettered-only exception is
+`type_end_mark`: a set symbol is a graphic, not words, so comparing transcriptions cannot see it.
 
 Every check here fired on a real card during the 2026-08-10/11 batches, and each one is something
 a human eye caught only because someone was looking:
@@ -407,7 +408,7 @@ def cost_collides(face, read):
         return None
     # Both are (x0, y0, x1, y1). The cost is right-aligned inside the plate, so its left edge is
     # the plate's right end less what the pips take.
-    starts_at = title[2] - compositor.cost_width(face, title)
+    starts_at = title[2] - compositor.cost_width(face, title, name)
     if starts_at >= name[2] + COST_GAP:
         return None
     return Problem(
@@ -416,6 +417,122 @@ def cost_collides(face, read):
         f"{starts_at:.2f} to fit the plate — the cost would be stamped on top of the name. Paint "
         "the name shorter and leave the right-hand end of the top plate bare, as the brief asks",
     )
+
+
+# SIGNOFF 2026-08-19, Elesh Norn, lettered. The type line transcribed as
+# "Legendary Creature — Phyrexian Praetor" and graded clean. A red Phyrexian phi sat in the
+# set-symbol slot. `proofread` never saw it: the mark is a graphic, and `read_back` is blind on
+# purpose (a yes/no "is there a set symbol" grades the hint). `detect`'s `marks` list cannot be
+# reused — on a lettered card every surface has writing. So the slot is graded in Python, on the
+# pixels, the same way `cost_collides` grades a collision the transcription cannot see.
+#
+# MEASURED on that card's type strip (inner face, deviation-from-plate-median mask):
+#
+#     phi     cx 0.92  aspect 1.54  height 0.82 of the strip  fill 0.18
+#     letters cx 0.43  aspect 56      height 0.10               fill 0.98
+#
+# and on Craterhoof's wrapping vine in the same slot, which must not fire:
+#
+#     vine    cx 0.83  aspect 1.33  height 0.74 of the strip  fill 0.08
+#
+# The gap is fill, not position: a badge is a compact body of ink, a vine is a sparse crossing.
+# Thresholds sit in those gaps. A box that is not returned is not guessed at — same rule as
+# `cost_collides` and `panels._usable`.
+TYPE_END_MIN_CX = 0.80
+TYPE_END_MIN_HFILL = 0.55
+TYPE_END_MIN_ASPECT = 0.40
+TYPE_END_MAX_ASPECT = 2.2
+TYPE_END_MIN_FILL = 0.12
+TYPE_END_MIN_SHARE = 0.010
+
+
+def type_end_mark(card, read):
+    """A painted badge in the type line's set-symbol slot, or None.
+
+    The brief already forbids this, twice, and Elesh Norn still grew one. The retry is what
+    makes the ban real: this code is the one that asks again.
+    """
+    strip = read.get("type")
+    if not strip:
+        return None
+    box = compositor._box(strip, card.size)
+    width, height = box[2] - box[0], box[3] - box[1]
+    if width < 24 or height < 12:
+        return None
+    mask = _plate_ink(card, box)
+    area = width * height
+    for mass, x0, y0, x1, y1 in _islands(mask):
+        bw, bh = x1 - x0, y1 - y0
+        if bh <= 0 or bw <= 0:
+            continue
+        cx = (x0 + x1) / 2 / width
+        aspect = bw / bh
+        fill = mass / (bw * bh)
+        if (
+            cx >= TYPE_END_MIN_CX
+            and bh / height >= TYPE_END_MIN_HFILL
+            and TYPE_END_MIN_ASPECT <= aspect <= TYPE_END_MAX_ASPECT
+            and fill >= TYPE_END_MIN_FILL
+            and mass / area >= TYPE_END_MIN_SHARE
+        ):
+            return Problem(
+                "painted_marks",
+                "the right-hand end of the type line carries a painted badge or set mark — a "
+                "proxy has no set, so that slot stays empty. Paint the type line's words alone, "
+                "left-aligned, and leave the right-hand end of the narrow strip bare",
+            )
+    return None
+
+
+def _plate_ink(image, box):
+    """Binary mask of ink sitting on this plate: letters, badges, anything off the material.
+
+    Both directions, because gold on a dark strip and a red phi on the same strip are both
+    'not the plate', and `crossing_mask` only sees things brighter than a quiet dark surface —
+    it returned empty on Elesh's type line. The threshold sits on the plate's own spread so a
+    grainy Sol Ring does not become one giant component of noise.
+    """
+    grey = image.crop(box).convert("L")
+    values = sorted(grey.getdata())
+    if not values:
+        return grey.point(lambda _: 0)
+    median = values[len(values) // 2]
+    spread = sorted(abs(value - median) for value in values)[len(values) // 2]
+    thresh = max(18, spread * 3)
+    return grey.point(lambda v: 255 if abs(v - median) >= thresh else 0)
+
+
+def _islands(mask, ink=40):
+    """Connected components of ink, as (mass, x0, y0, x1, y1) in the mask's pixels, largest first."""
+    width, height = mask.size
+    pixels = mask.load()
+    seen = [[False] * width for _ in range(height)]
+    found = []
+    for y in range(height):
+        for x in range(width):
+            if seen[y][x] or pixels[x, y] <= ink:
+                continue
+            stack = [(x, y)]
+            seen[y][x] = True
+            min_x = max_x = x
+            min_y = max_y = y
+            mass = 0
+            while stack:
+                cx, cy = stack.pop()
+                mass += 1
+                min_x, max_x = min(min_x, cx), max(max_x, cx)
+                min_y, max_y = min(min_y, cy), max(max_y, cy)
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = cx + dx, cy + dy
+                    if (
+                        0 <= nx < width and 0 <= ny < height
+                        and not seen[ny][nx] and pixels[nx, ny] > ink
+                    ):
+                        seen[ny][nx] = True
+                        stack.append((nx, ny))
+            found.append((mass, min_x, min_y, max_x + 1, max_y + 1))
+    found.sort(reverse=True)
+    return found
 
 
 NEAR = 0.015

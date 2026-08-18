@@ -89,11 +89,9 @@ class GenerateTests(TestCase):
             "include_flavor_text": True,
             "use_original_art_reference": False,
             "borderless": True,
-            # OURS, not theirs, and deliberately not accepted from the body: the lettered mode has
-            # 30 generations behind it against the composited path's 82 and is not a toggle to
-            # hand a customer yet. It is recorded anyway, because `job.options` is the only record
-            # of what produced a stored card and a post-mortem that cannot tell the two modes
-            # apart is worthless.
+            # OURS, not theirs, and never accepted from the body. Art Only paints no words, so
+            # this stays off; Creative Full forces it on (see the test below). Recorded either
+            # way: `job.options` is the only record of what produced a stored card.
             "lettered": False,
         })
 
@@ -110,6 +108,17 @@ class GenerateTests(TestCase):
         self.assertIs(Job.objects.get(pk=response.json()["id"]).options["borderless"], True)
         response, _, _ = self._post({"decklist": "x", "borderless": False})
         self.assertIs(Job.objects.get(pk=response.json()["id"]).options["borderless"], False)
+
+    def test_creative_full_is_lettered_and_the_body_cannot_turn_it_off(self):
+        """Snake bar, 2026-08-19. Creative Full is the lettered path: the model paints the words
+        so the scene can cross them, which compositing cannot do. Not a payload field — their
+        API has no such switch, and a customer toggle would let a card whose text we did not
+        author ship without the read-back gate."""
+        response, _, _ = self._post({"decklist": "x"})
+        self.assertIs(Job.objects.get(pk=response.json()["id"]).options["lettered"], True)
+        Job.objects.all().delete()
+        response, _, _ = self._post({"decklist": "x", "lettered": False})
+        self.assertIs(Job.objects.get(pk=response.json()["id"]).options["lettered"], True)
 
     def test_an_unknown_mode_is_refused(self):
         response, resolve, _ = self._post({"decklist": "x", "frame_version": "FRAME_v1"})

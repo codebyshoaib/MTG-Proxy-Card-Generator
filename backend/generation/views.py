@@ -62,7 +62,9 @@ def generate(request):
         return _bad(f"decklist is longer than {DECKLIST_MAX} characters")
 
     try:
-        options_ = _options(body)
+        # Creative Full is the lettered path (snake bar, 2026-08-19). Not read from the body:
+        # their payload has no such field, and a customer toggle would skip the read-back gate.
+        options_ = _options(body, lettered=(mode == "CREATIVE_FULL"))
     except ValueError as invalid:
         return _bad(str(invalid))
 
@@ -107,8 +109,11 @@ def job_status(_request, job_id):
     return Response(_job(get_object_or_404(Job, pk=job_id)))
 
 
-def _options(body):
-    """The seven inputs out of an untrusted body, or `ValueError`."""
+def _options(body, lettered=False):
+    """The seven inputs out of an untrusted body, or `ValueError`.
+
+    `lettered` is ours, set from the mode, never from the body.
+    """
     text = {}
     for field in ("art_style", "art_direction", "color_palette", "custom_art_notes"):
         value = body.get(field)
@@ -129,6 +134,7 @@ def _options(body):
         include_flavor_text=bool(body.get("include_flavor_text", False)),
         use_original_art_reference=bool(body.get("use_original_art_reference", True)),
         borderless=bool(body.get("borderless", True)),
+        lettered=lettered,
     )
 
 

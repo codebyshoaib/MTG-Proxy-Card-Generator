@@ -28,7 +28,7 @@ def _slug(name):
 
 
 class Command(BaseCommand):
-    help = "Generate and composite one Creative Full card."
+    help = "Generate one Creative Full card (lettered by default; --composited for the old path)."
 
     def add_arguments(self, parser):
         parser.add_argument("card")
@@ -57,7 +57,8 @@ class Command(BaseCommand):
         parser.add_argument("--out", default=Path("card-out"), type=Path)
         parser.add_argument(
             "--from", dest="source", default=None, type=Path,
-            help="Composite onto this existing empty-furniture PNG instead of generating one.",
+            help="Replay onto this existing PNG instead of generating one. Lettered by default; "
+                 "pair with --composited for an empty-furniture blank.",
         )
         parser.add_argument(
             "--panels", dest="panel_boxes", default=None, type=Path,
@@ -70,11 +71,12 @@ class Command(BaseCommand):
             help="Also write a copy with the detected boxes outlined, to check the detector.",
         )
         parser.add_argument(
-            "--lettered", action="store_true",
-            help="The model letters the card itself and only the mana cost is composited. Graded "
-                 "field by field against Scryfall by `check.proofread` — on trial, not the "
-                 "default. The HTTP API does not accept this.",
+            "--composited", dest="lettered", action="store_false",
+            help="Paint blank furniture and stamp Scryfall's text (the old path). Default is "
+                 "lettered: the model paints the words so the scene can cross them, and only "
+                 "the mana cost is stamped.",
         )
+        parser.set_defaults(lettered=True)
 
     def handle(
         self, card, style, out, source, boxes, direction, palette, notes, flavor,

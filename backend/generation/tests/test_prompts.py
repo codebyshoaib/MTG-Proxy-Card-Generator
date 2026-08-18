@@ -423,6 +423,28 @@ class LetteredBriefTests(SimpleTestCase):
         self.assertIn("NOWHERE ELSE", self._lettered())
         self.assertIn("each field appears EXACTLY ONCE", self._lettered())
 
+    def test_the_type_line_right_end_stays_bare(self):
+        """SIGNOFF 2026-08-19, Elesh Norn. The type line was lettered correctly and the model
+        still painted a red Phyrexian phi in the set-symbol slot, because the brief forbade an
+        'expansion symbol' and the model did not think a faction mark was one. Name the PLACE —
+        the right-hand end of the narrow strip — the same way the reserved cost end is named."""
+        brief = self._lettered()
+        self.assertIn("THE RIGHT-HAND END OF THE NARROW STRIP STAYS COMPLETELY BARE", brief)
+        self.assertIn("Phyrexian phi", brief)
+        self.assertIn("LEFT-ALIGNED", brief)
+
+    def test_the_set_symbol_ban_names_the_mark_that_actually_shipped(self):
+        """The end-of-brief sentence already existed and Elesh still grew a Φ. 'Badge' and
+        'expansion symbol' were too generic; the painted thing was a faction phi on a Phyrexian
+        type line."""
+        brief = self._lettered()
+        self.assertIn("Phyrexian phi", brief)
+        composited = prompts.creative_full(GREEN)
+        self.assertIn("Phyrexian phi", composited)
+        self.assertTrue(
+            [line for line in composited.split("\n") if line.strip()][-2].startswith("NO SET SYMBOL")
+        )
+
     def test_the_pt_field_is_only_described_on_a_card_that_has_one(self):
         """Same rule as the order clause and the tab's value: a card told about a surface it does
         not have has been told to paint it (bd mtg-m8q)."""

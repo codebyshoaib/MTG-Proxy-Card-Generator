@@ -94,6 +94,43 @@ TYPE_CARD_SIZE = 0.032
 # boxes are detection failures — the two 0.13 and 0.155 title boxes in that population swallowed
 # the art — and forcing those up to a floor would put back exactly the spread this removes.
 NAME_MAX_OF_BOX = TYPE_MAX_OF_BOX = 0.80
+# Lettered-mode pips. Size is from the CARD, same as the composited path — a 37px painted name
+# (Tromell, live pack 2026-08-19) is the model's lettering, not a reason to stamp 37px stickers
+# into a 160px well. Vertical placement still follows the ink (`_letter_band`). Horizontal
+# placement follows the plate's INNER face (`_plate_face_right`), not the detector box: that box
+# includes the carved black bevel, and 50px of card-width inset still landed the pips on it.
+#
+# How much brighter (dark plate) or darker (pale plate) a row's ink percentile has to sit than the
+# plate before it counts as lettering. 25 is the gap on the live pack: gold p90 ≈ 180 against a
+# plate at ~30, and empty padded rows stay within a few values of the plate.
+LETTER_INK = 25
+# Gap between adjacent pips, as a share of pip diameter. The Scryfall SVGs are full-bleed circles
+# (r=50 on a 100 viewBox), so 0.00 would kiss. 0.14 is a clear hairline of plate — and it only
+# reads as a gap if the pips are NOT then run through the Beleren glow; that blur was what made
+# {2}{G} look like one smashed oval on Tromell.
+PIP_GAP = 0.14
+# Optical pad inside the inner face, as a share of pip diameter. Real cards sit the last pip
+# about a quarter of a pip in from the frame; flush against the bevel is the crop the client sent.
+PIP_RIGHT = 0.28
+PIP_MIN_OF_TARGET = 0.75
+# How far past a truncated title box we may walk, in pixels, across a painted
+# seam. Kitchen Finks' cost box sat 8-16px past the detector's x1; a wider gap
+# is art, not the rest of the plate.
+PLATE_SEAM = 24
+# Air between the painted name and the first pip, as a share of CARD width.
+COST_NAME_GAP = 0.02
+# Collision-gate budget for rim + optical pad, as a share of CARD width, for callers that have
+# boxes and no pixels (`check.cost_collides`). Measured Tromell bevel was 69px / 1792 ≈ 0.038.
+COST_RIGHT_INSET = 0.045
+# Right-hand rim peel. A flat black bevel has no STRUCTURE, so `printable_face` leaves it. The
+# face is the first sustained run of columns whose mean looks like the plate's interior.
+FACE_RIGHT_MIN = 0.70
+FACE_RIGHT_RUN = 8
+FACE_RIGHT_MAX_PEEL = 0.22
+# Inside-out walk: a stop after this much of the strip was face is a rim, even
+# if the detector box then runs 100px into a gothic frame (Progenitus, 26% of
+# the strip — over FACE_RIGHT_MAX_PEEL, so a peel-cap would reject the real edge).
+FACE_RIGHT_MIN_SPAN = 0.55
 # THE SIZE THE BODY TEXT IS SET AT, in px, taken from the CARD and not from the panel.
 #
 # The same fix the name and type line got on 2026-08-17 and the P/T on 2026-08-16, for the same
@@ -866,10 +903,13 @@ def compose(png, face, panels, include_flavor_text=False, lettered=False):
             # in that box rode half off the top of the plate. Both repairs are tuned for a BLANK
             # surface — they find a plate's painted extent by scanning for the value edge where it
             # meets the art, and on a lettered card the name's own strokes are value edges, so the
-            # scan walks past the rim and into the picture. There is nothing left to repair here
-            # anyway: `panels.read_back` is asked for this box on a FINISHED card, where the plate
-            # is as plain to the model as it is to a reader.
-            _cost(image, face, _box(panels["title"], image.size), light)
+            # scan walks past the rim and into the picture.
+            #
+            # The NAME box is the letters. Passing it is what stops the pips sitting in the
+            # title box's empty sky (live pack 2026-08-19). `_cost` then tightens it to the
+            # painted ink, because the box itself still carries detector padding.
+            name = _box(panels["name"], image.size) if panels.get("name") else None
+            _cost(image, face, _box(panels["title"], image.size), light, name)
         return image, False
 
     if panels.get("title"):
@@ -939,6 +979,7 @@ def _draw_pips(layer, tokens, pip_px, right, height):
     Shared by the composited path, where the name shrinks around the cost, and the lettered one,
     where the model painted the name and left the room the brief reserved.
     """
+    gap = round(pip_px * PIP_GAP)
     x = right
     for token in tokens:
         pip = symbols.pip("{" + token + "}", pip_px)
@@ -946,14 +987,14 @@ def _draw_pips(layer, tokens, pip_px, right, height):
             raise UnknownSymbol(f"no vendored artwork for the mana symbol {{{token}}}")
         x -= pip_px
         layer.alpha_composite(pip, (round(x), round((height - pip_px) / 2)))
-        x -= round(pip_px * 0.10)
+        x -= gap
 
 
 CARD_ASPECT = 2400 / 1792
 """Our canvas, height over width — the same one the reference site paints on."""
 
 
-def cost_width(face, box):
+def cost_width(face, box, name_box=None):
     """How much of the CARD'S WIDTH this cost will take when stamped into `box`, in fractions.
 
     The same arithmetic `_cost` does in pixels, in the unit a caller holding only 0-1 boxes can
@@ -964,13 +1005,276 @@ def cost_width(face, box):
     tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
     if not tokens:
         return 0.0
-    # `_plate_size` in fractions of the card's HEIGHT, then the pip at 0.92 of it and a tenth of a
-    # pip of gap, then across to fractions of the card's WIDTH.
-    size = min(NAME_CARD_SIZE, (box[3] - box[1]) * NAME_MAX_OF_BOX)
-    return len(tokens) * 1.10 * 0.92 * size * CARD_ASPECT
+    pip = _pip_frac(box)
+    n = len(tokens)
+    return (n + max(0, n - 1) * PIP_GAP) * pip * CARD_ASPECT + COST_RIGHT_INSET
 
 
-def _cost(image, face, box, light=(1, 1)):
+def _pip_frac(plate, name=None):
+    """Pip diameter as a fraction of CARD HEIGHT. Shared by `_cost` and `cost_width`.
+
+    `name` is accepted so older callers keep working; it does not size the pip. A short painted
+    name is not a small cost — see the note above `LETTER_INK`.
+    """
+    plate_h = plate[3] - plate[1]
+    from_card = NAME_CARD_SIZE * 0.92
+    from_plate = plate_h * 0.72
+    return max(0.018, min(from_card, from_plate))
+
+
+def _longest_run(indexes):
+    """Inclusive (start, end) of the longest consecutive run, or None."""
+    if not indexes:
+        return None
+    best_a = best_b = start = prev = indexes[0]
+    for i in indexes[1:]:
+        if i == prev + 1:
+            prev = i
+            continue
+        if prev - start > best_b - best_a:
+            best_a, best_b = start, prev
+        start = prev = i
+    if prev - start > best_b - best_a:
+        best_a, best_b = start, prev
+    return best_a, best_b
+
+
+def _letter_band(image, box):
+    """`box` tightened to the rows that actually carry the painted name.
+
+    `read_back` reports the letters plus padding. LIVE PACK 2026-08-19, Tromell: an 89px name box
+    with the gold in the bottom 37px. Pips sized and centred on that box sat 23px above the name
+    and read as stickers. The pixels know where the ink is.
+
+    Not `crossing_mask`. That misses on a grainy plate (its own docstring, Craterhoof thorns), and
+    Tromell's grey banner is grainy. A row's 90th-percentile luma against the plate catches gold,
+    cream and white lettering alike without a hue gate; inverted (10th percentile) on a pale plate.
+    The longest dense run drops snow on the banner and a highlight on one serif.
+    """
+    x0, y0, x1, y1 = box
+    width, height = x1 - x0, y1 - y0
+    if width < 8 or height < 8:
+        return box
+    grey = image.crop(box).convert("L")
+    dark = surface_is_dark(image, box)
+    px = grey.load()
+    step = 2 if width >= 16 else 1
+    high, low, means = [], [], []
+    for y in range(height):
+        vals = sorted(px[x, y] for x in range(0, width, step))
+        n = len(vals) - 1
+        high.append(vals[int(0.90 * n)])
+        low.append(vals[int(0.10 * n)])
+        means.append(sum(vals) / len(vals))
+    if dark:
+        plate = sorted(means)[len(means) // 4]
+        inked = [i for i, value in enumerate(high) if value >= plate + LETTER_INK]
+    else:
+        plate = sorted(means)[(3 * len(means)) // 4]
+        inked = [i for i, value in enumerate(low) if value <= plate - LETTER_INK]
+    run = _longest_run(inked)
+    if run is None:
+        return box
+    a, b = run
+    # A highlight or a carved hairline, not a name.
+    if (b - a + 1) < max(16, round(height * 0.28)):
+        return box
+    a = max(0, a - 1)
+    b = min(height - 1, b + 1)
+    return x0, y0 + a, x1, y0 + b + 1
+
+
+def _plate_face_right(image, box):
+    """Right edge of the plate's inner face, in pixels, inside the carved rim.
+
+    Two walks, because each one is blind to a rim the other can see.
+
+    OUTSIDE-IN (the fallback). `printable_face` peels STRUCTURE. A flat black bevel is
+    even, so it is not peeled, and lettered pips land on the rim. LIVE PACK 2026-08-19,
+    Tromell: the detector box ended at x=1740 and the grey face at x=1671 — a 69px bevel.
+    COST_RIGHT_INSET of 50px still sat the pips on it. The face is the first sustained run
+    of columns whose mean looks like the plate's interior.
+
+    INSIDE-OUT (tried first). SIGNOFF 2026-08-19, Atraxa and Craterhoof: the outer frame
+    is the SAME luma as the inner face, so outside-in treats the frame as face and the
+    last pip sits on the rim, split by the carved lip. This strip's LEFT is already on
+    the face (`_cost_well` seeds it there). Walk right until the column is not. Trust
+    that stop if most of the strip was face — a vine at 40% is rejected; a rim after
+    a gothic frame that the detector swallowed (Progenitus) is not.
+    """
+    x0, y0, x1, y1 = box
+    width, height = x1 - x0, y1 - y0
+    if width < 16 or height < 8:
+        return x1
+    region = image.crop(box).convert("L")
+    ym0, ym1 = height // 4, height - height // 4
+    px = region.load()
+    ref = region.crop((max(1, width // 16), ym0, max(2, width // 4), ym1))
+    interior = ImageStat.Stat(ref).mean[0]
+    if interior < 8:
+        return x1
+    slack = max(22.0, interior * 0.40)
+
+    def col_mean(i):
+        vals = [px[i, y] for y in range(ym0, ym1)]
+        return sum(vals) / len(vals)
+
+    def col_sd(i):
+        vals = [px[i, y] for y in range(ym0, ym1)]
+        mean = sum(vals) / len(vals)
+        return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+
+    miss = 0
+    last = 0
+    found = None
+    for i in range(width):
+        if abs(col_mean(i) - interior) <= slack:
+            last = i
+            miss = 0
+            continue
+        miss += 1
+        if miss < FACE_RIGHT_RUN:
+            continue
+        if last >= int(width * FACE_RIGHT_MIN_SPAN):
+            found = x0 + last + 1
+        break
+
+    # High-structure columns on the right are a carved / gold rim even when the
+    # mean is unhelpful (Birthing Pod's gold end). Cap-out peels nothing.
+    sd_cap = 10.0
+    limit = int(width * FACE_RIGHT_MAX_PEEL)
+    cut = 0
+    while cut < limit and col_sd(width - 1 - cut) > sd_cap:
+        cut += 1
+    if cut and cut < limit:
+        peeled = x1 - cut
+        found = peeled if found is None else min(found, peeled)
+
+    if found is not None:
+        return found
+
+    floor = interior * FACE_RIGHT_MIN
+    rim_slack = max(25.0, interior * 0.45)
+    run = 0
+    start = 0
+    for i in range(limit):
+        mean = col_mean(width - 1 - i)
+        if mean >= floor and abs(mean - interior) <= rim_slack:
+            if run == 0:
+                start = i
+            run += 1
+            if run >= FACE_RIGHT_RUN:
+                return x1 - start
+        else:
+            run = 0
+    return x1
+
+
+def _extend_plate_right(image, box, name=None):
+    """Grow a truncated title box to the right while the name-band still looks like plate.
+
+    SIGNOFF 2026-08-19, Kitchen Finks: `read_back` reported the left half of a split
+    title (x1=0.67). The model had painted an empty cost box past a seam. Pips jammed
+    into the first half and the second sat empty. The pixels of the plate continue;
+    the detector stopped at the divider.
+    """
+    x0, y0, x1, y1 = box
+    cap = int(image.width * 0.96)
+    if x1 >= cap - 8:
+        return box
+    if name:
+        by0 = max(y0, min(round(name[1]), y1 - 2))
+        by1 = max(by0 + 1, min(round(name[3]), y1))
+    else:
+        mid = (y0 + y1) // 2
+        by0, by1 = max(y0, mid - 8), min(y1, mid + 8)
+    grey = image.convert("L")
+    px = grey.load()
+    pad_y = max(1, (by1 - by0) // 4)
+    ym0, ym1 = by0 + pad_y, by1 - pad_y
+    if ym1 <= ym0:
+        ym0, ym1 = by0, by1
+
+    def col_mean(x):
+        vals = [px[x, y] for y in range(ym0, ym1)]
+        return sum(vals) / len(vals)
+
+    look = min(40, max(8, (x1 - x0) // 8))
+    ref = sum(col_mean(x) for x in range(max(x0, x1 - look), x1)) / look
+    slack = max(22.0, ref * 0.45)
+    miss = 0
+    last = x1
+    for x in range(x1, cap):
+        if abs(col_mean(x) - ref) <= slack:
+            last = x + 1
+            miss = 0
+        else:
+            miss += 1
+            if miss > PLATE_SEAM:
+                break
+    if last - x1 < 16:
+        return box
+    return x0, y0, last, y1
+
+
+def _cost_well(image, box, name=None):
+    """The inner rectangle that should hold the pips.
+
+    SIGNOFF 2026-08-19: the well used to start at 72% of the title box. That boxed
+    Progenitus's ten pips into the right quarter (postage stamps) and Kitchen Finks's
+    three into the left half of a split plate (overflow, empty box on the right).
+    The well starts after the painted name and runs to the inner face of the plate —
+    including a cost box `read_back` dropped, via `_extend_plate_right`.
+    """
+    x0, y0, x1, y1 = box
+    gap = round(image.width * COST_NAME_GAP)
+    if name:
+        wx0 = min(max(round(name[2]) + gap, x0), x1 - 8)
+        seed0 = max(y0, min(round(name[1]), y1 - 2))
+        seed1 = max(seed0 + 1, min(round(name[3]), y1))
+    else:
+        wx0 = x0 + int((x1 - x0) * 0.50)
+        mid = (y0 + y1) // 2
+        seed0, seed1 = max(y0, mid - 8), min(y1, mid + 8)
+    strip = image.crop((wx0, y0, x1, y1)).convert("L")
+    sw, _ = strip.size
+    px = strip.load()
+    xm0, xm1 = max(1, sw // 4), max(sw // 4 + 1, sw - sw // 4)
+
+    def row_mean(y):
+        vals = [px[x, y - y0] for x in range(xm0, xm1)]
+        return sum(vals) / len(vals)
+
+    ref = sum(row_mean(y) for y in range(seed0, seed1)) / (seed1 - seed0)
+    slack = max(22.0, ref * 0.40)
+
+    def same(y):
+        return abs(row_mean(y) - ref) <= slack
+
+    top = seed0
+    while top > y0 and same(top - 1):
+        top -= 1
+    bot = seed1
+    while bot < y1 and same(bot):
+        bot += 1
+    peel_x0 = max(wx0, x1 - max(round((x1 - x0) * 0.35), round(image.width * 0.22)))
+    right = _plate_face_right(image, (peel_x0, top, x1, bot))
+    return wx0, top, right, bot
+
+
+def _paste_pips(image, layer, box):
+    """Scryfall SVG pips onto the card, no Beleren glow.
+
+    `_stamp` is the type treatment: a blurred halo of the letter's own light. The pip artwork
+    already is a finished circle; running it through that halo is what made {2}{G} read as one
+    overlapping oval on Tromell. Occlusion stays — a vine crossing the cost still goes in front.
+    """
+    surface = image.crop(box)
+    image.alpha_composite(layer, (box[0], box[1]))
+    _occlude(image, surface, layer, box)
+
+
+def _cost(image, face, box, light=(1, 1), name=None):
     """The mana cost alone, for the mode where the model lettered everything else.
 
     WHY THIS IS THE ONE FIELD WE KEEP. Measured over 25 lettered generations the model took the
@@ -978,20 +1282,43 @@ def _cost(image, face, box, light=(1, 1)):
     or fewer, and none of the four that need counting past four or a compound pip. See
     `prompts._lettering_block`.
 
-    No shrink loop, because there is no name of ours to shrink: the size comes straight off
-    `_plate_size`, which is where `_title`'s loop starts from anyway, and the room was reserved in
-    the brief by `prompts._cost_room` from these same constants.
+    No shrink loop, because there is no name of ours to shrink. Size and placement follow the
+    inner cost well on the right of the title plate — the painted name is only a seed for which
+    band that well sits on.
     """
     tokens = list(reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")))
     if not tokens:
         return
-    x0, y0, x1, y1 = box
+    if name:
+        name = _letter_band(image, name)
+    box = _extend_plate_right(image, box, name)
+    wx0, wy0, wx1, wy1 = _cost_well(image, box, name)
+    target = max(1, round(_pip_frac((0, 0, 1, (wy1 - wy0) / image.height)) * image.height))
+    pip_px = target
+    n = len(tokens)
+    well_w = max(1, wx1 - wx0)
+    floor = max(16, round(target * PIP_MIN_OF_TARGET))
+
+    def span(at):
+        return n * at + max(0, n - 1) * round(at * PIP_GAP)
+
+    def pad(at):
+        return max(round(at * PIP_RIGHT), round(image.width * 0.012))
+
+    # Shrink only when the row would hit the name. Floor is 75% of the name-matching
+    # size — below that they read as dots (Progenitus, sign-off pack).
+    while pip_px > floor and span(pip_px) + pad(pip_px) > well_w:
+        pip_px -= 1
+    mid = (wy0 + wy1) / 2
+    top = round(mid - pip_px / 2)
+    top = max(wy0, min(top, wy1 - pip_px))
+    y0, y1 = top, top + pip_px
     height = y1 - y0
-    pad = round(height * PAD) + round((x1 - x0) * 0.015)
-    size = _plate_size(box, image.height, NAME_CARD_SIZE, NAME_MAX_OF_BOX)
-    layer, _ = _layer(box)
-    _draw_pips(layer, tokens, max(1, round(size * 0.92)), (x1 - x0) - pad, height)
-    _stamp(image, layer, box, size, panel_palette(image, box, display=True)[2], light)
+    right = wx1 - pad(pip_px)
+    stamp_x0 = max(wx0, right - span(pip_px))
+    layer, _ = _layer((stamp_x0, y0, right, y1))
+    _draw_pips(layer, tokens, pip_px, right - stamp_x0, height)
+    _paste_pips(image, layer, (stamp_x0, y0, right, y1))
 
 
 def _title(image, face, box, light=(1, 1)):
@@ -1027,7 +1354,7 @@ def _title(image, face, box, light=(1, 1)):
     def cost_width(at):
         """What the pips take, gap included — the loop below spends it before the name."""
         pip_px = pip_size(at)
-        return len(tokens) * (pip_px + round(pip_px * 0.10))
+        return len(tokens) * pip_px + max(0, len(tokens) - 1) * round(pip_px * PIP_GAP)
 
     font = ImageFont.truetype(str(fonts.DISPLAY), size)
     tracking = size * TRACKING

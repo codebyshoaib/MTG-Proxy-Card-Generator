@@ -260,13 +260,14 @@ class LetteredTests(SimpleTestCase):
         "text": [{"where": "title_plate", "text": "Terror of the Peaks"}],
     }
 
-    def _run(self, problems=(), **kwargs):
+    def _run(self, problems=(), mark=None, **kwargs):
         with mock.patch.object(pipeline, "prepare", return_value=(FACE, None, False)), \
                 mock.patch.object(pipeline.prompts, "creative_full", return_value="brief") as brief, \
                 mock.patch.object(pipeline.bleed, "trim", side_effect=lambda png: (png, 0.0)), \
                 mock.patch.object(pipeline.panels, "read_back", return_value=self.READ) as read, \
                 mock.patch.object(pipeline.panels, "detect") as detect, \
-                mock.patch.object(pipeline.check, "proofread", return_value=list(problems)) as grade, \
+                mock.patch.object(pipeline.check, "proofread", side_effect=lambda *a, **k: list(problems)) as grade, \
+                mock.patch.object(pipeline.check, "type_end_mark", return_value=mark), \
                 mock.patch.object(pipeline.check, "contrast", return_value=None), \
                 mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
                 mock.patch.object(pipeline.check, "matted", return_value=None), \
@@ -299,6 +300,18 @@ class LetteredTests(SimpleTestCase):
     def test_the_brief_is_asked_for_in_lettered_mode(self):
         _, _, _, _, brief, _ = self._run()
         self.assertTrue(brief.call_args.kwargs["lettered"])
+
+    def test_a_badge_on_the_type_line_repaints(self):
+        """SIGNOFF 2026-08-19, Elesh Norn. The text gate passed; the slot still had a set mark.
+        The retry is what makes that defect not ship."""
+        badge = check.Problem(
+            "painted_marks",
+            "the right-hand end of the type line carries a painted badge or set mark",
+        )
+        generate, _, _, _, brief, result = self._run(mark=badge)
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(brief.call_args.kwargs["corrections"], [badge.detail])
+        self.assertEqual([p.code for p in result.problems], ["painted_marks"])
 
 
 class StoredBoxesTests(SimpleTestCase):

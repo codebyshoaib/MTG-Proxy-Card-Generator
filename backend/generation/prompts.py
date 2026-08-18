@@ -1104,8 +1104,9 @@ def _lettering_block(face):
     where = [
         ('"name"', "the LEFT-HAND part of the plate across the top, left-aligned — see the "
          "reserved end below."),
-        ('"type_line"', "the narrow strip, and NOWHERE ELSE. Printing it a second time anywhere "
-         "on the card is a failed image."),
+        ('"type_line"', "the narrow strip, LEFT-ALIGNED, and NOWHERE ELSE. The RIGHT-HAND END "
+         "of that strip stays BARE — see below. Printing it a second time anywhere on the card "
+         "is a failed image."),
         ('"rules_text"', "the broad pale strip, and nowhere else. A blank line between "
          "paragraphs; text in ( ) is reminder text and is set in italics."),
         ('"power_toughness"', "the small tab at the bottom right."),
@@ -1136,6 +1137,28 @@ def _lettering_block(face):
                 "",
             ]
             if (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
+            else []
+        ),
+        # SIGNOFF 2026-08-19, Elesh Norn. The type line was the words
+        # "Legendary Creature — Phyrexian Praetor" and the model "completed" the layout with a
+        # red Phyrexian phi at the right-hand end — the slot a real card uses for its set
+        # symbol. The ban at the end of the brief already forbids a set symbol by that name, and
+        # it lost, because the model did not think a faction mark WAS one. Same lesson as the
+        # reserved cost end: name the PLACE, not the shape. Only stated when the card has a type
+        # line, which is every card we letter.
+        *(
+            [
+                "THE RIGHT-HAND END OF THE NARROW STRIP STAYS COMPLETELY BARE — bare stone, bare "
+                "metal, bare wood, nothing on it at all. A real Magic card puts a small expansion "
+                "symbol there; this card belongs to no set, so that slot is empty. The type line "
+                "is the words of \"type_line\" alone, left-aligned. Do NOT paint an expansion "
+                "mark, a rarity diamond, a holofoil stamp, a faction icon, a Phyrexian phi, a "
+                "colored pip, a gem, a seal, a crest or any small round badge at that end — not "
+                "even if the type line names Phyrexian, Angel, Eldrazi or anything else that has "
+                "a famous mark.",
+                "",
+            ]
+            if card.get("type_line")
             else []
         ),
         # THE PANEL NOW SIZES ITSELF, which is the whole point of this mode (bd mtg-469). Both
@@ -1830,10 +1853,12 @@ def creative_full(
         # appears — the model is reproducing a card layout it has seen ten thousand times, and the
         # slot is more load-bearing than the shape.
         "NO SET SYMBOL. A real Magic card carries a small expansion symbol at the right-hand end "
-        "of its type line; this card belongs to no set, so that slot stays EMPTY. Paint no small "
-        "badge, emblem, gem, seal, crest, sigil, rune-circle, spiral or logo at either end of any "
-        "surface, in any corner, or anywhere in the artwork. Where one would sit, paint the "
-        "surface's own plain material.",
+        "of its type line; this card belongs to no set, so that slot stays EMPTY. Empty of an "
+        "expansion mark, a rarity diamond, a holofoil stamp, a faction icon, a Phyrexian phi, a "
+        "colored pip, a gem, a seal, a crest, a sigil, or any other small round badge — including "
+        "when the type line names Phyrexian or another faction that has a famous mark. Where that "
+        "mark would sit, paint the strip's own plain material. Paint no such badge at either end "
+        "of any surface, in any corner, or anywhere in the artwork.",
         # MEASURED 2026-08-11 on Raphael: a band of carved rune-like marks came back in the gap
         # between the type plate and the rules panel — a region the ban above named as surfaces
         # and edge, and therefore did not cover. Runes are the recurring form of this failure

@@ -1,10 +1,15 @@
 # MTG Proxy Card Generator
 
 Paste a card name or a decklist, pick a look, get back printable proxy cards.
-The card's real game text is never invented — it comes from Scryfall and we draw it.
+The card's real game text is never invented — it comes from Scryfall.
+
+**Current state — Milestone 1 engineering is done.** Waiting on client sign-off
+of the ten-style pack (`../Project Material/CLIENT-PACK-PIP-2026-08-19/`) to
+close M1. Creative Full letters the card so the scene can cross the words; we
+stamp only the mana cost from Scryfall's symbol artwork. Proxies have no set
+symbol. Art Only paints no furniture and no text. Prototype UI is in `frontend/`.
 
 Spec: `../BUILD-SPEC.md`. Proposal: `../Project Material/`.
-Scope right now is **Milestone 1** — the generation engine and a prototype UI.
 
 ## Layout
 
@@ -43,9 +48,10 @@ Fonts and mana symbols are **vendored and committed**, never loaded from the sys
 
 ## Two decisions worth knowing before reading the code
 
-**The AI paints the art and the card name. We composite everything else** — type line,
-rules text, mana pips, P/T, loyalty. Body text is therefore correct by construction;
-the name is the one element that can be wrong, which is what the verify loop is for.
+**Creative Full is lettered.** The AI paints the art and the game text as one picture —
+that is the only way a vine can sit in front of the words. We stamp only the mana cost
+(Scryfall SVGs). `check.proofread` reads every other field back against Scryfall; a
+mismatch repaints. Art Only paints no text at all.
 
 **Mana pips are Scryfall SVGs, not the Mana font.** BUILD-SPEC §16 picked the Mana
 font; that turned out not to work. Its glyphs are monochrome and hybrid/Phyrexian pips

@@ -39,10 +39,9 @@ class Options(NamedTuple):
     # Borderless is the default — client, 2026-08-13. False builds the card's edge out of the
     # scene instead of running the art full bleed.
     borderless: bool = True
-    # OFF by default: the composited path is the one with 82 measured generations behind it. The
-    # lettered path has 30, and it is on trial for the reasons in `prompts._lettering_block` — the
-    # model sizes the panel to text it can see, and scene material crosses in FRONT of lettering it
-    # set itself, which is the one thing the composite-afterwards order can never do.
+    # Engine default is off so compositor tests and `--from` replays stay on the stamped path.
+    # The PRODUCT default is on: Creative Full through the API and `compose_card` letters, because
+    # that is the only order in which the scene can cross the words (snake bar, 2026-08-19).
     lettered: bool = False
 
 
@@ -285,20 +284,26 @@ def _letter(png, face, options):
     and one vision call either way. What that vision call answers changes completely, because a
     lettered card is not a blank — see `read_back`'s own docstring.
 
-    The compositor still runs, for exactly one field. `check.proofread` grades everything else
-    against Scryfall, which is what `CLAUDE.md` requires of any mode where the AI writes game text.
+    The compositor still runs, for exactly one field. `check.proofread` grades the lettering
+    against Scryfall; `check.type_end_mark` grades the type line's set-symbol slot, which is a
+    graphic and so invisible to a transcription. Together they are what `CLAUDE.md` requires of
+    any mode where the AI writes game text: a card that drifted from Scryfall must not ship.
     """
     read = panels.read_back(png, face)
     # Only the title box is printed into. The rules boxes are read so `contrast` still has
     # something to measure — a panel too dark to read is the defect that graded Sound on 10 of 10
     # cards before that gate existed, and the model choosing its own panel does not make it safe.
-    detected = {key: read[key] for key in ("title", "rules") if read.get(key)}
+    detected = {key: read[key] for key in ("title", "name", "type", "rules") if read.get(key)}
     card, _ = compositor.compose(io.BytesIO(png), face, detected, lettered=True)
 
     problems = check.proofread(face, read)
     # The one fault the read-back cannot see: it transcribes the card BEFORE the cost is stamped,
     # so a cost about to land on the name passes every text check. Measured on the first live run.
     problems += [problem for problem in [check.cost_collides(face, read)] if problem]
+    # SIGNOFF 2026-08-19, Elesh Norn: a red Phyrexian phi in the set-symbol slot. The type line
+    # transcribed correctly, so `proofread` had nothing to say — the mark is not words. Graded
+    # on the finished card, on the pixels of the type strip the read-back located.
+    problems += [problem for problem in [check.type_end_mark(card, read)] if problem]
     problems += [problem for problem in [check.contrast(card, detected)] if problem]
     problems += [problem for problem in [check.colour_identity(card, face)] if problem]
     if options.borderless:

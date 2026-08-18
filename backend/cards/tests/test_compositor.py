@@ -856,6 +856,211 @@ class LetteredCostTests(SimpleTestCase):
         self.assertTrue(changed, "nothing was stamped on the plate at all")
         self.assertGreater(min(changed), 1792 * 0.5, f"pips reached the name's half: {changed[:5]}")
 
+    def test_pips_sit_on_the_name_band_when_the_title_box_is_too_tall(self):
+        """LIVE PACK 2026-08-19. `read_back`'s title box swallows sky and vines (Triumph 293px,
+        Toski 249px) and `_cost` centred 90px pips in that box, so they floated off the painted
+        name and packed into the right-hand flourish. The name box is the letters. Use it."""
+        before = card((210, 205, 200))
+        # The plate the viewer sees: a short dark bar. The reported title box is twice as tall.
+        ImageDraw.Draw(before).rectangle((80, 190, 1710, 270), fill=(28, 30, 34, 255))
+        title = (80 / 1792, 80 / 2400, 1710 / 1792, 360 / 2400)
+        name = (110 / 1792, 200 / 2400, 980 / 1792, 258 / 2400)
+        after = compositor.compose(
+            before.copy(), FACE, {"title": title, "name": name}, lettered=True,
+        )[0]
+        ny0, ny1 = round(name[1] * 2400), round(name[3] * 2400)
+        # Right-hand third of the reported title: where the pips go.
+        x0, x1 = 1100, 1710
+        changed = []
+        bp, ap = before.load(), after.load()
+        for y in range(80, 360):
+            for x in range(x0, x1, 2):
+                if bp[x, y] != ap[x, y]:
+                    changed.append(y)
+        self.assertTrue(changed, "no pips stamped")
+        mid = (min(changed) + max(changed)) / 2
+        name_mid = (ny0 + ny1) / 2
+        self.assertLess(
+            abs(mid - name_mid), 12,
+            f"pips centred at y={mid:.0f}, name at y={name_mid:.0f}",
+        )
+
+    def test_pips_sit_in_the_plate_well_not_the_padded_name_box(self):
+        """LIVE PACK 2026-08-19, Tromell. The name box was 89px with the gold in the bottom
+        37px. Centering on that box sat pips 23px above the name AND into the top bevel of
+        the cost well. The well is the inner face on the right; sit there."""
+        before = card((210, 205, 200))
+        ImageDraw.Draw(before).rectangle((80, 100, 1710, 320), fill=(28, 30, 34, 255))
+        gold = (120, 254, 900, 290)
+        ImageDraw.Draw(before).rectangle(gold, fill=(198, 152, 64, 255))
+        title = (80 / 1792, 100 / 2400, 1710 / 1792, 320 / 2400)
+        name = (110 / 1792, 200 / 2400, 980 / 1792, 290 / 2400)
+        after = compositor.compose(
+            before.copy(), FACE, {"title": title, "name": name}, lettered=True,
+        )[0]
+        changed = []
+        bp, ap = before.load(), after.load()
+        for y in range(100, 320):
+            for x in range(1100, 1710, 2):
+                if bp[x, y] != ap[x, y]:
+                    changed.append(y)
+        self.assertTrue(changed, "no pips stamped")
+        mid = (min(changed) + max(changed)) / 2
+        plate_mid = (100 + 320) / 2
+        box_mid = (200 + 290) / 2
+        self.assertLess(
+            abs(mid - plate_mid), 16,
+            f"pips centred at y={mid:.0f}, plate at {plate_mid:.0f} (padded box at {box_mid:.0f})",
+        )
+
+    def test_pips_sit_inside_the_plate_face_not_on_its_black_rim(self):
+        """LIVE PACK 2026-08-19, Tromell crop. The detector box includes a 70px carved bevel.
+        Insetting 50px from that box still put {2}{G} on the bevel, overlapping each other
+        because `_stamp` then glowed them. Face, then pad, then paste without the glow."""
+        before = card((210, 205, 200))
+        ImageDraw.Draw(before).rectangle((80, 120, 1710, 280), fill=(70, 72, 76, 255))
+        ImageDraw.Draw(before).rectangle((1640, 120, 1710, 280), fill=(8, 8, 10, 255))
+        title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 900 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{2}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x, changed_y = [], []
+        for y in range(120, 280):
+            for x in range(1100, 1710, 2):
+                if bp[x, y] != ap[x, y]:
+                    changed_x.append(x)
+                    changed_y.append(y)
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1640, f"pips reached the black rim: x={max(changed_x)}")
+        # Two clusters with plate between them — not one overlapping oval.
+        xs = sorted(set(changed_x))
+        gaps = [b - a for a, b in zip(xs, xs[1:]) if b - a > 2]
+        self.assertTrue(gaps, "adjacent pips merged into one blob")
+
+    def test_pips_stay_inside_a_frame_as_dark_as_the_plate(self):
+        """SIGNOFF 2026-08-19, Atraxa / Craterhoof.
+
+        The outer frame is the same luma as the inner face, so walking IN from the
+        right treats the frame as face and parks the last pip on the rim. A bright
+        lip marks the real edge; walking OUT from the face stops there. Four pips
+        ({5}{G}{G}{G}) must all sit left of that lip, not straddle it.
+        """
+        before = card((210, 205, 200))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1710, 280), fill=(42, 44, 48, 255))
+        draw.rectangle((1634, 120, 1644, 280), fill=(200, 196, 180, 255))
+        draw.rectangle((1644, 120, 1710, 280), fill=(42, 44, 48, 255))
+        title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 900 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{5}{G}{G}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(1100, 1710, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1634, f"pips reached the outer frame: x={max(changed_x)}")
+
+    def test_a_ten_pip_cost_uses_the_empty_plate_instead_of_shrinking_to_dots(self):
+        """SIGNOFF 2026-08-19, Progenitus. Starting the well at 72% of the title boxed
+        ten pips into the right quarter and shrank them to ~30px. The plate between
+        the name and the rim is empty on purpose — use it, at name-matching size."""
+        before = self.blank()
+        name = (110 / 1792, 150 / 2400, 700 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(),
+            {**FACE, "name": "Progenitus",
+             "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}"},
+            {"title": PANELS["title"], "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        x0, y0, x1, y1 = compositor._box(PANELS["title"], before.size)
+        nx1 = round(name[2] * 1792)
+        changed = [
+            (x, y) for y in range(y0, y1) for x in range(x0, x1, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed, "no pips stamped")
+        xs, ys = [c[0] for c in changed], [c[1] for c in changed]
+        self.assertGreater(min(xs), nx1, f"pips ran into the name: x={min(xs)}")
+        self.assertLess(max(xs), x1, f"pips overflowed the plate: x={max(xs)}")
+        self.assertGreaterEqual(max(ys) - min(ys), 60, f"pips shrank to dots: h={max(ys)-min(ys)}")
+
+    def test_pips_land_in_the_empty_half_of_a_split_title(self):
+        """SIGNOFF 2026-08-19, Kitchen Finks. The detector returned the name-half.
+        An empty cost box sits past a seam. Stamp there, not overflowing the first half."""
+        before = card((200, 198, 190))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1100, 280), fill=(42, 44, 48, 255))
+        draw.rectangle((1116, 120, 1680, 280), fill=(42, 44, 48, 255))
+        title = (80 / 1792, 120 / 2400, 1100 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 700 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{1}{G}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(80, 1680, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertGreater(min(changed_x), 1116, f"pips stayed in the name-half: x={min(changed_x)}")
+        self.assertLess(max(changed_x), 1680, f"pips overflowed the cost box: x={max(changed_x)}")
+
+    def test_pips_stop_at_the_inner_bar_when_the_detector_swallowed_the_frame(self):
+        """SIGNOFF 2026-08-19, Progenitus. The detector box includes 140px of gothic
+        frame past a bright lip. A peel-cap of 22% of that strip rejects the real
+        edge. Most of the strip was face — that stop is the rim."""
+        before = card((210, 205, 200))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1600, 280), fill=(48, 50, 54, 255))
+        draw.rectangle((1590, 120, 1604, 280), fill=(200, 196, 180, 255))
+        draw.rectangle((1604, 120, 1740, 280), fill=(48, 50, 54, 255))
+        title = (80 / 1792, 120 / 2400, 1740 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 700 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(),
+            {**FACE, "name": "Progenitus",
+             "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(1100, 1740, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1590, f"pips reached the gothic frame: x={max(changed_x)}")
+
+    def test_pips_stay_off_a_gold_rim(self):
+        """SIGNOFF 2026-08-19, Birthing Pod. A high-structure gold end, darker face.
+        The last pip sat on the gold because luma-matching never saw a bevel."""
+        before = card((30, 28, 24))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1680, 280), fill=(36, 34, 32, 255))
+        for x in range(1648, 1680):
+            draw.line((x, 120, x, 280), fill=(180 + (x % 8) * 5, 148, 52, 255))
+        title = (80 / 1792, 120 / 2400, 1680 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 900 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{3}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(1100, 1680, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1648, f"pips reached the gold rim: x={max(changed_x)}")
+
     def test_a_card_with_no_cost_is_left_untouched(self):
         before = self.blank()
         after = compositor.compose(before.copy(), {**FACE, "mana_cost": ""}, PANELS, lettered=True)[0]

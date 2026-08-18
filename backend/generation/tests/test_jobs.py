@@ -112,6 +112,17 @@ class RunTests(TestCase):
         written = Path(self.media.name) / "generated" / str(job.pk) / "lightning-bolt.png"
         self.assertEqual(Image.open(written).format, "PNG")
 
+    def test_creative_full_letters_even_when_the_job_did_not_record_it(self):
+        """The worker is the last line. A row created before the snake default, or by hand with
+        options={}, still has to letter — compositing this mode is the thing the client rejected."""
+        with mock.patch.object(
+            jobs.pipeline, "creative_full",
+            return_value=jobs.pipeline.Result(mock.Mock(), [], {}, None),
+        ) as paint:
+            jobs.run(_job().pk)
+        options = paint.call_args.args[1]
+        self.assertTrue(options.lettered)
+
     def test_an_unsound_art_only_face_is_reported_unsound_and_not_ok(self):
         """bd mtg-l4x. `_face` used to hard-code `problems = []` on this branch — not "no faults
         found" but "never looked", which is how a fully bordered card shipped marked ok."""

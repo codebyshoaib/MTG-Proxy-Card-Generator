@@ -662,6 +662,85 @@ class CostCollisionTests(SimpleTestCase):
         self.assertIsNone(check.cost_collides(self.PROGENITUS, {"title": self.PLATE}))
 
 
+class TypeEndMarkTests(SimpleTestCase):
+    """A painted badge in the type line's set-symbol slot.
+
+    SIGNOFF 2026-08-19, Elesh Norn: the type line was lettered correctly and the card still grew a
+    red Phyrexian phi at the right-hand end of the strip. `proofread` compares transcribed words
+    to Scryfall, so a graphic that is not words is invisible to it. Asking the vision model
+    'is there a set symbol' would grade the hint. This grades the pixels.
+    """
+
+    SIZE = (896, 1200)
+    STRIP = (0.10, 0.60, 0.90, 0.66)
+    READ = {"type": STRIP}
+
+    def card(self, badge=False, vine=False, pale=False):
+        """A dark (or pale) type strip with left-aligned lettering, optionally a right-end mark."""
+        plate = (228, 214, 190) if pale else (36, 32, 28)
+        ink = (40, 32, 24) if pale else (210, 186, 96)
+        image = Image.new("RGB", self.SIZE, (18, 20, 24))
+        draw = ImageDraw.Draw(image)
+        box = (
+            int(self.STRIP[0] * self.SIZE[0]), int(self.STRIP[1] * self.SIZE[1]),
+            int(self.STRIP[2] * self.SIZE[0]), int(self.STRIP[3] * self.SIZE[1]),
+        )
+        draw.rectangle(box, fill=plate)
+        # Left-aligned type line, as the brief asks. Rectangles, not a font — this grades the
+        # SLOT, and a real glyph's outline is one more variable than the test is about.
+        top, bottom = box[1] + 14, box[3] - 14
+        x = box[0] + 16
+        for width in (38, 22, 30, 18, 26, 20):
+            draw.rectangle((x, top, x + width, bottom), fill=ink)
+            x += width + 8
+        if badge:
+            # Compact filled body at the far right — Elesh's phi, a rarity diamond, a gem.
+            cy = (box[1] + box[3]) / 2
+            r = (box[3] - box[1]) * 0.38
+            cx = box[2] - (box[3] - box[1]) * 0.70
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(196, 28, 28))
+        if vine:
+            # Sparse crossing entering from above, the Craterhoof / Sol Ring wrapping case.
+            draw.line(
+                (box[2] - 40, box[1] - 30, box[2] - 10, box[3] + 30),
+                fill=(48, 90, 36), width=4,
+            )
+        return image
+
+    def test_a_bare_right_end_passes(self):
+        self.assertIsNone(check.type_end_mark(self.card(), self.READ))
+
+    def test_the_measured_phi_is_caught(self):
+        problem = check.type_end_mark(self.card(badge=True), self.READ)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "painted_marks")
+        self.assertIn("right-hand end", problem.detail)
+        self.assertIn("bare", problem.detail)
+
+    def test_a_wrapping_vine_is_not_a_set_symbol(self):
+        """Craterhoof's vine fills the same slot by position and not by body. Failing it would
+        repaint cards the brief asked to wrap the furniture with the scene."""
+        self.assertIsNone(check.type_end_mark(self.card(vine=True), self.READ))
+
+    def test_a_pale_strip_is_graded_too(self):
+        """The mask is deviation from the plate, not 'brighter than dark'."""
+        self.assertIsNone(check.type_end_mark(self.card(pale=True), self.READ))
+        self.assertEqual(
+            check.type_end_mark(self.card(badge=True, pale=True), self.READ).code,
+            "painted_marks",
+        )
+
+    def test_a_strip_the_read_back_did_not_return_is_not_guessed_at(self):
+        self.assertIsNone(check.type_end_mark(self.card(badge=True), {}))
+
+    def test_the_type_strip_is_asked_for_so_the_slot_can_be_graded(self):
+        """Without this box the gate has nothing to crop, and a yes/no in the prompt would grade
+        the hint rather than the card."""
+        self.assertIn("type", panels_module.READ_SCHEMA["properties"])
+        self.assertIn('"type"', panels_module.READ_PROMPT)
+        self.assertIn("narrow strip the type line sits on", panels_module.READ_PROMPT)
+
+
 class ObstructionTests(SimpleTestCase):
     """Something painted across the panel the text has to go on.
 

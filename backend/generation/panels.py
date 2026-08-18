@@ -184,6 +184,12 @@ READ_SCHEMA = {
         # with is the name the model lettered on the same plate. Asked for here rather than
         # inferred, because inferring it means guessing at a font we did not choose.
         "name": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the card's name lettering"},
+        # SIGNOFF 2026-08-19, Elesh Norn. The lettered grader transcribed the type line correctly
+        # and never saw the red Phyrexian phi at the strip's right-hand end, because that mark is
+        # a graphic, not words. `check.type_end_mark` grades the slot in Python; it needs this
+        # box the same way `cost_collides` needs the title plate. Asked as geometry, not as
+        # "is there a set symbol" — a yes/no here would grade the hint.
+        "type": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the type-line strip, full width"},
         "rules": {
             "type": "array",
             "items": BOX,
@@ -229,7 +235,7 @@ Report EVERY patch, including runes, rune-like scratches, carved script, a signa
 expansion symbol, a collector number and a copyright line. If a surface carries writing twice,
 that is two entries. Do not merge writing from two different surfaces into one entry.
 
-SECOND, report the bounding box of two surfaces, as [ymin, xmin, ymax, xmax] normalised 0-1000:
+SECOND, report bounding boxes as [ymin, xmin, ymax, xmax] normalised 0-1000:
 
 - "title": the plate across the very top, the one the card's name is printed on. Give the plate's
   FULL extent from its left end to its right end, inside its carved rim or riveted border. If a
@@ -237,6 +243,9 @@ SECOND, report the bounding box of two surfaces, as [ymin, xmin, ymax, xmax] nor
   — keep that part IN the box. What must stay OUT is anything past where the plate itself stops.
 - "name": the box of the card's NAME as it is lettered on that plate — the printed letters only,
   from the first letter to the last, not the whole plate.
+- "type": the narrow strip the type line sits on, FULL extent from its left end to its right end,
+  inside its carved rim. If a badge, vine or creature crosses in FRONT of part of it, the strip
+  still runs behind — keep that part IN the box.
 - "rules": a LIST, one box per pale body-text strip, top to bottom. Give the INNER usable area —
   the flat part the text sits on, inside any rim and clear of anything crossing in front of it."""
 
@@ -280,7 +289,7 @@ def read_back(png, face):
         for patch in (raw.get("text") or [])
         if (patch.get("text") or "").strip()
     ]}
-    for key in ("title", "name"):
+    for key in ("title", "name", "type"):
         box = _usable(raw.get(key))
         if box:
             read[key] = box
