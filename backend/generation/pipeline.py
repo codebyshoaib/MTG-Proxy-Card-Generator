@@ -294,12 +294,16 @@ def _letter(png, face, options):
     # something to measure — a panel too dark to read is the defect that graded Sound on 10 of 10
     # cards before that gate existed, and the model choosing its own panel does not make it safe.
     detected = {key: read[key] for key in ("title", "name", "type", "rules") if read.get(key)}
-    card, _ = compositor.compose(io.BytesIO(png), face, detected, lettered=True)
+    blank = Image.open(io.BytesIO(png)).convert("RGBA")
+    card, _ = compositor.compose(blank.copy(), face, detected, lettered=True)
 
     problems = check.proofread(face, read)
     # The one fault the read-back cannot see: it transcribes the card BEFORE the cost is stamped,
     # so a cost about to land on the name passes every text check. Measured on the first live run.
     problems += [problem for problem in [check.cost_collides(face, read)] if problem]
+    # CLIENT-PACK 2026-08-19: last pip on the carved rim. `cost_collides` is fractions of the
+    # detector box; this grades the inner face, on the blank, before the stamp.
+    problems += [problem for problem in [check.cost_off_rim(blank, face, read)] if problem]
     # SIGNOFF 2026-08-19, Elesh Norn: a red Phyrexian phi in the set-symbol slot. The type line
     # transcribed correctly, so `proofread` had nothing to say — the mark is not words. Graded
     # on the finished card, on the pixels of the type strip the read-back located.

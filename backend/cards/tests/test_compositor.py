@@ -1,9 +1,14 @@
 """Compositing onto synthetic surfaces, so the geometry is checked without an AI call."""
 
+import json
+from pathlib import Path
+
 from django.test import SimpleTestCase
 from PIL import Image, ImageDraw
 
 from cards import compositor, textlayout
+
+DATA = Path(__file__).resolve().parent / "data"
 
 FACE = {
     "name": "Terror of the Peaks",
@@ -1060,6 +1065,93 @@ class LetteredCostTests(SimpleTestCase):
         ]
         self.assertTrue(changed_x, "no pips stamped")
         self.assertLess(max(changed_x), 1648, f"pips reached the gold rim: x={max(changed_x)}")
+
+    def test_pips_stay_off_gold_already_inside_the_detector_box(self):
+        """CLIENT-PACK 2026-08-19, Birthing Pod. The detector x1 is already ON the gold
+        lip. `_extend_plate_right` sampled its ref from those last 40px, matched the
+        ornament past it, and grew to the cap — last pip sat on the gold, past the
+        rounded bar. Interior ref, then peel; do not grow through a rim the box
+        already swallowed."""
+        before = card((30, 28, 24))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1640, 280), fill=(36, 34, 32, 255))
+        for x in range(1624, 1640):
+            draw.line((x, 120, x, 280), fill=(180 + (x % 8) * 5, 148, 52, 255))
+        # Art past the bar, same dark-grey family as a plate — the contaminated ref
+        # matched this and walked to 0.96 of the card.
+        draw.rectangle((1640, 120, 1720, 280), fill=(40, 38, 36, 255))
+        title = (80 / 1792, 120 / 2400, 1640 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 700 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{3}{G/P}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(700, 1720, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1624, f"pips reached the gold: x={max(changed_x)}")
+
+    def test_pips_stop_before_a_thin_lip_with_a_same_family_tail(self):
+        """CLIENT-PACK 2026-08-19, Atraxa. A ~8px bright lip, then a decorative end
+        whose luma is within slack of the face. FACE_RIGHT_RUN of 8 on luma alone
+        never accumulated: the tail looked like face, the last pip sat on the notch.
+        A structure spike is the rim even when the mean comes back."""
+        before = card((210, 205, 200))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1710, 280), fill=(64, 64, 66, 255))
+        draw.rectangle((1630, 120, 1638, 280), fill=(200, 196, 180, 255))
+        draw.rectangle((1638, 120, 1710, 280), fill=(52, 54, 58, 255))
+        title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 900 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{G}{W}{U}{B}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(1100, 1710, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertLess(max(changed_x), 1630, f"pips reached the notch: x={max(changed_x)}")
+
+    def test_shipped_title_crops_keep_pips_inside_the_inner_face(self):
+        """CLIENT-PACK 2026-08-19. Synthetic plates passed; these two crops are the
+        pixels that shipped. `inner_face` is the column where the well's flat
+        material ends (gold lip on Birthing Pod, bright bevel on Atraxa), read
+        off the blank, not off `_plate_face_right` — that is the code under test."""
+        titles = json.loads((DATA / "titles.json").read_text())
+        for slug, spec in titles.items():
+            before = Image.open(DATA / f"{slug}-title.png").convert("RGBA")
+            after = compositor.compose(
+                before.copy(),
+                {**FACE, "name": spec["name"], "mana_cost": spec["mana_cost"]},
+                {"title": spec["title"], "name": spec["name_box"]},
+                lettered=True,
+            )[0]
+            x0, y0, x1, y1 = compositor._box(spec["title"], before.size)
+            bp, ap = before.load(), after.load()
+            changed_x = [
+                x for y in range(y0, y1, 2) for x in range(x0, before.width, 2)
+                if bp[x, y] != ap[x, y]
+            ]
+            self.assertTrue(changed_x, f"{slug}: no pips stamped")
+            self.assertLess(
+                max(changed_x), spec["inner_face"],
+                f"{slug}: last pip x={max(changed_x)} past inner face {spec['inner_face']}",
+            )
+            self.assertTrue(
+                compositor.cost_fits(
+                    before,
+                    {**FACE, "name": spec["name"], "mana_cost": spec["mana_cost"]},
+                    compositor._box(spec["title"], before.size),
+                    compositor._box(spec["name_box"], before.size),
+                ),
+                f"{slug}: inner face too short for the cost — would stamp onto the rim",
+            )
 
     def test_a_card_with_no_cost_is_left_untouched(self):
         before = self.blank()

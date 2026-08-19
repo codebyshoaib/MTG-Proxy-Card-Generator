@@ -313,6 +313,19 @@ class LetteredTests(SimpleTestCase):
         self.assertEqual(brief.call_args.kwargs["corrections"], [badge.detail])
         self.assertEqual([p.code for p in result.problems], ["painted_marks"])
 
+    def test_a_cost_that_would_sit_on_the_rim_repaints(self):
+        """CLIENT-PACK 2026-08-19. `cost_collides` compares boxes; this grades the inner
+        face. Without the retry the last pip ships on the gold."""
+        rim = check.Problem(
+            "cost_no_room",
+            "the inner face of the title plate is too short for this mana cost",
+        )
+        with mock.patch.object(pipeline.check, "cost_off_rim", return_value=rim):
+            generate, _, _, _, brief, result = self._run()
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(brief.call_args.kwargs["corrections"], [rim.detail])
+        self.assertEqual([p.code for p in result.problems], ["cost_no_room"])
+
 
 class StoredBoxesTests(SimpleTestCase):
     """Re-compositing stored art must cost nothing and move nothing but the code.

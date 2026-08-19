@@ -110,8 +110,9 @@ LETTER_INK = 25
 # {2}{G} look like one smashed oval on Tromell.
 PIP_GAP = 0.14
 # Optical pad inside the inner face, as a share of pip diameter. Real cards sit the last pip
-# about a quarter of a pip in from the frame; flush against the bevel is the crop the client sent.
-PIP_RIGHT = 0.28
+# about a quarter of a pip in from the frame; 0.28 still read as flush on the 2026-08-19 pack
+# (Progenitus, Craterhoof) once the well was the inner face. 0.40 is a visible hairline of plate.
+PIP_RIGHT = 0.40
 PIP_MIN_OF_TARGET = 0.75
 # How far past a truncated title box we may walk, in pixels, across a painted
 # seam. Kitchen Finks' cost box sat 8-16px past the detector's x1; a wider gap
@@ -1127,15 +1128,32 @@ def _plate_face_right(image, box):
     miss = 0
     last = 0
     found = None
+    bright = 0
+    spike = max(50.0, interior * 0.80)
     for i in range(width):
-        if abs(col_mean(i) - interior) <= slack:
+        mean = col_mean(i)
+        if mean > interior + spike:
+            bright += 1
+        else:
+            bright = 0
+        luma_ok = abs(mean - interior) <= slack
+        # Grain on the LEFT of a stone plate (Craterhoof) is not a rim. A structured
+        # spike AFTER a long face run is (Atraxa's bevel, Birthing Pod's gold).
+        established = last >= int(width * FACE_RIGHT_MIN_SPAN)
+        if luma_ok and not (col_sd(i) > 10.0 and established):
             last = i
             miss = 0
             continue
         miss += 1
-        if miss < FACE_RIGHT_RUN:
+        # CLIENT-PACK 2026-08-19, Atraxa: an 8px bright bevel, then a decorative end
+        # whose luma is within slack of the face. FACE_RIGHT_RUN never accumulated
+        # on luma, so the last pip sat on the notch. A highlight this much above
+        # the plate, or a structured spike after the face is established, is the
+        # rim even when it is thinner than the run.
+        rim = miss >= FACE_RIGHT_RUN or bright >= 4
+        if not rim:
             continue
-        if last >= int(width * FACE_RIGHT_MIN_SPAN):
+        if established:
             found = x0 + last + 1
         break
 
@@ -1199,13 +1217,36 @@ def _extend_plate_right(image, box, name=None):
         vals = [px[x, y] for y in range(ym0, ym1)]
         return sum(vals) / len(vals)
 
-    look = min(40, max(8, (x1 - x0) // 8))
-    ref = sum(col_mean(x) for x in range(max(x0, x1 - look), x1)) / look
+    def col_sd(x):
+        vals = [px[x, y] for y in range(ym0, ym1)]
+        mean = sum(vals) / len(vals)
+        return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+
+    # INTERIOR of the plate, not the last 40px. SIGNOFF Birthing Pod: those 40px
+    # were already the gold lip the detector swallowed, so matching that ref grew
+    # through more ornament to the cap and the last pip sat on the gold.
+    inner0 = x0 + int((x1 - x0) * 0.15)
+    inner1 = x0 + int((x1 - x0) * 0.55)
+    if name:
+        inner0 = max(inner0, min(round(name[2]) + 8, inner1 - 8))
+    look = max(8, inner1 - inner0)
+    ref = sum(col_mean(x) for x in range(inner0, inner0 + look)) / look
     slack = max(22.0, ref * 0.45)
     miss = 0
+    structured = 0
     last = x1
     for x in range(x1, cap):
-        if abs(col_mean(x) - ref) <= slack:
+        mean = col_mean(x)
+        # High-structure columns are a carved / gold rim, not a seam. The Kitchen
+        # Finks gap is FLAT pale sky (sd ~0) and must still be crossed; Birthing
+        # Pod's gold lip is striped (sd > 10) and must not.
+        if col_sd(x) > 10.0:
+            structured += 1
+            if structured >= 6:
+                break
+        else:
+            structured = 0
+        if abs(mean - ref) <= slack:
             last = x + 1
             miss = 0
         else:
@@ -1260,6 +1301,28 @@ def _cost_well(image, box, name=None):
     peel_x0 = max(wx0, x1 - max(round((x1 - x0) * 0.35), round(image.width * 0.22)))
     right = _plate_face_right(image, (peel_x0, top, x1, bot))
     return wx0, top, right, bot
+
+
+def cost_fits(image, face, box, name=None):
+    """Whether this cost fits the plate's inner face at the size floor.
+
+    CLIENT-PACK 2026-08-19: `_cost` used to shrink to the floor and stamp anyway, so a well
+    that was really the outer frame still shipped pips on the rim. The gate in
+    `check.cost_off_rim` reads this so a miss becomes a repaint, not a stamp.
+    """
+    tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
+    if not tokens:
+        return True
+    if name:
+        name = _letter_band(image, name)
+    box = _extend_plate_right(image, box, name)
+    wx0, wy0, wx1, wy1 = _cost_well(image, box, name)
+    n = len(tokens)
+    target = max(1, round(_pip_frac((0, 0, 1, (wy1 - wy0) / image.height)) * image.height))
+    floor = max(16, round(target * PIP_MIN_OF_TARGET))
+    span = n * floor + max(0, n - 1) * round(floor * PIP_GAP)
+    pad = max(round(floor * PIP_RIGHT), round(image.width * 0.012))
+    return span + pad <= max(1, wx1 - wx0)
 
 
 def _paste_pips(image, layer, box):

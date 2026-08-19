@@ -419,6 +419,29 @@ def cost_collides(face, read):
     )
 
 
+def cost_off_rim(image, face, read):
+    """The inner face of the title plate is too short for this cost, or None.
+
+    CLIENT-PACK 2026-08-19: `_cost` shrank to the floor and stamped onto the bevel when
+    `_plate_face_right` had treated the outer frame as face. `cost_collides` cannot see this —
+    it only compares name-box to plate-box fractions, with no pixels. Graded on the BLANK,
+    before the stamp, same as `obstructed`.
+    """
+    title = read.get("title")
+    if not title or not (face.get("mana_cost") or "").strip():
+        return None
+    box = compositor._box(title, image.size)
+    name = compositor._box(read["name"], image.size) if read.get("name") else None
+    if compositor.cost_fits(image, face, box, name):
+        return None
+    return Problem(
+        "cost_no_room",
+        "the inner face of the title plate is too short for this mana cost — the last pip "
+        "would sit on the rim. Leave more of the right-hand end of the top plate bare, as "
+        "the brief asks",
+    )
+
+
 # SIGNOFF 2026-08-19, Elesh Norn, lettered. The type line transcribed as
 # "Legendary Creature — Phyrexian Praetor" and graded clean. A red Phyrexian phi sat in the
 # set-symbol slot. `proofread` never saw it: the mark is a graphic, and `read_back` is blind on

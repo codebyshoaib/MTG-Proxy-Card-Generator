@@ -1,0 +1,16 @@
+{
+  "birthing-pod": {
+    "mana_cost": "{3}{G/P}",
+    "name": "Birthing Pod",
+    "title": [0.085, 0.047, 0.915, 0.131],
+    "name_box": [0.115, 0.08, 0.394, 0.116],
+    "inner_face": 1624
+  },
+  "atraxa-praetors-voice": {
+    "mana_cost": "{G}{W}{U}{B}",
+    "name": "Atraxa, Praetors' Voice",
+    "title": [0.053, 0.045, 0.947, 0.145],
+    "name_box": [0.105, 0.078, 0.63, 0.12],
+    "inner_face": 1630
+  }
+}

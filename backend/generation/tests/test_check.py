@@ -662,6 +662,39 @@ class CostCollisionTests(SimpleTestCase):
         self.assertIsNone(check.cost_collides(self.PROGENITUS, {"title": self.PLATE}))
 
 
+class CostOffRimTests(SimpleTestCase):
+    """Last pip on the carved rim, which `cost_collides` cannot see.
+
+    CLIENT-PACK 2026-08-19: the detector box included the frame, `_cost` shrank to the
+    floor and stamped onto the bevel. Graded on a painted plate, not on fractions.
+    """
+
+    SIZE = (1792, 2400)
+    PROGENITUS = {"name": "Progenitus", "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}"}
+
+    def plate(self, x1=0.94):
+        image = Image.new("RGBA", self.SIZE, (200, 200, 200, 255))
+        ImageDraw.Draw(image).rectangle(
+            (90, 100, int(x1 * 1792), 300), fill=(30, 34, 38, 255),
+        )
+        return image
+
+    def test_a_full_plate_fits_ten_pips(self):
+        read = {"title": (0.05, 0.04, 0.94, 0.12), "name": (0.08, 0.06, 0.30, 0.11)}
+        self.assertIsNone(check.cost_off_rim(self.plate(), self.PROGENITUS, read))
+
+    def test_a_well_too_short_for_ten_pips_is_caught(self):
+        read = {"title": (0.05, 0.04, 0.40, 0.12), "name": (0.08, 0.06, 0.32, 0.11)}
+        self.assertEqual(
+            check.cost_off_rim(self.plate(0.40), self.PROGENITUS, read).code,
+            "cost_no_room",
+        )
+
+    def test_a_card_with_no_cost_cannot_overflow_a_rim(self):
+        read = {"title": (0.05, 0.04, 0.40, 0.12)}
+        self.assertIsNone(check.cost_off_rim(self.plate(0.40), {"mana_cost": ""}, read))
+
+
 class TypeEndMarkTests(SimpleTestCase):
     """A painted badge in the type line's set-symbol slot.
 
