@@ -3,11 +3,16 @@
 Paste a card name or a decklist, pick a look, get back printable proxy cards.
 The card's real game text is never invented — it comes from Scryfall.
 
-**Current state — Milestone 1 engineering is done.** Waiting on client sign-off
-of the ten-style pack (`../Project Material/CLIENT-PACK-PIP-2026-08-19/`) to
-close M1. Creative Full letters the card so the scene can cross the words; we
-stamp only the mana cost from Scryfall's symbol artwork. Proxies have no set
-symbol. Art Only paints no furniture and no text. Prototype UI is in `frontend/`.
+**Current state — Milestone 1 is not closed.** The client rejected the ten-style
+pack (`../Project Material/CLIENT-PACK-PIP-2026-08-19/`): look ≠ his examples,
+mana still off the title frames, text boxes must flow through the card. Lettered
+cost now stamps inside the inner face and `cost_off_rim` refuses a well that
+cannot fit. The lettered brief now asks for scene overlapping the letters; the
+composited path still keeps panels clear for our type. Next pack is his seven
+against his look, after the examples folder lands — not another style sheet.
+Creative Full letters the card; we stamp only the mana cost from Scryfall.
+Proxies have no set symbol. Art Only paints no furniture and no text.
+Prototype UI is in `frontend/`.
 
 Spec: `../BUILD-SPEC.md`. Proposal: `../Project Material/`.
 

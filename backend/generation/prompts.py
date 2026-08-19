@@ -1550,11 +1550,26 @@ def creative_full(
             # ornament that makes a surface look hand-made moves OUTSIDE the flat face rather than
             # eating into it, which is also what the reference site's own slabs do — carved bosses
             # and curled rods at the ends of a straight-sided panel.
-            "The flat part of each surface is a straight-sided rectangle — its left and right "
-            "edges run straight up and down, the same way its top and bottom run straight across. "
-            "Torn corners, curled rods, carved ends and chipped stone all sit OUTSIDE that "
-            "rectangle, added around it. A surface that narrows as it goes down loses the text "
-            "printed on it.",
+            # Lettered mode paints the words as part of the picture, so a stone arch or a scroll
+            # or a glowing orb is the product (CLIENT 2026-08-19, "text boxes to flow through").
+            # The compositor only stamps the cost; a straight-sided rectangle is leftover from
+            # printing into empty panels and is the pasted-on look he rejected.
+            *(
+                [
+                    "The flat part of each surface is a straight-sided rectangle — its left and right "
+                    "edges run straight up and down, the same way its top and bottom run straight across. "
+                    "Torn corners, curled rods, carved ends and chipped stone all sit OUTSIDE that "
+                    "rectangle, added around it. A surface that narrows as it goes down loses the text "
+                    "printed on it.",
+                ]
+                if not lettered
+                else [
+                    "Each surface is an OBJECT in this scene, not a rectangle laid on the painting — "
+                    "a stone arch, a hanging scroll, a curl of bark, a torn ribbon, a glowing orb. "
+                    "Its long top and bottom edges stay roughly level so the lettering can run, but "
+                    "the outline is made of the scene, not cropped.",
+                ]
+            ),
             # Straight-sided constrains the OUTLINE, and neither of the two faults below is an
             # outline. Both were measured on the first batch generated under it (bd mtg-cig).
             #
@@ -1913,36 +1928,56 @@ def creative_full(
     # Only in the borderless branch. The framed branch has the edge material anchoring the plates,
     # which is what this clause substitutes for, and it has not drawn the complaint.
     if borderless:
-        before_the_writing_ban(
-            "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
-            "picture with labels laid on it. At least TWO of the raised surfaces have a real "
-            "element of the scene crossing in FRONT of them — a vine, a creeping root, a claw, a "
-            "limb, a wingtip, a tail, a curl of smoke, a lick of flame, a hanging chain. Not a "
-            "shadow and not a glow: a solid thing, drawn in the same ink and lit by the same light "
-            "as the rest of the picture, passing over the surface and continuing out the other "
-            # The hard boundary. `cards.compositor` prints into each surface's interior, so an
-            # element crossing the middle of the pale strip lands under our own rules text and
-            # `check.contrast` fails the card into a repaint — trading the client's complaint for
-            # a legibility one. Overlapping the rim is free; overlapping the face costs a credit.
-            # Stated as geometry rather than as a ban, because bd mtg-z12's finding is that naming
-            # a thing summons it.
-            "side. Each crossing stays at that surface's OUTER EDGE or over one of its corners: "
-            "the broad flat middle of every surface stays completely clear and unbroken, because "
-            "that is where the card's text is printed. "
-            # MEASURED 2026-08-16, first batch under this clause: Craterhoof's vine crossed a
-            # quarter of the way along the top plate. `panels.detect` is asked to keep what
-            # crosses in front OUT of the box, did so correctly, and the box that came back
-            # started at x=0.27 — so the name was laid out from there and sat visibly off-centre
-            # on a plate that runs nearly the full width. The clause worked and the card looked
-            # wrong, which is the cheapest kind of bug to catch and the easiest to leave in.
-            #
-            # The top plate is the one surface where this costs something, because it is the only
-            # one whose text is left-aligned rather than centred, and it is the sliver a fanned
-            # hand shows. So its crossing is pushed out to the very end.
-            "On the plate across the top, keep any crossing within a sixth of one end or the "
-            "other. The long middle of that plate carries the card's name and must be clear "
-            "right across it."
-        )
+        if lettered:
+            well = (
+                " The RIGHT-HAND END of the top plate is the exception and stays BARE — that "
+                "reserved well is where the mana cost is stamped afterwards, and a crossing there "
+                "lands on the symbols. The name on the left of that plate MAY be crossed."
+                if symbols.TOKEN.findall(face.get("mana_cost") or "")
+                else " The name on the top plate MAY be crossed."
+            )
+            before_the_writing_ban(
+                "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
+                "picture with labels laid on it. At least TWO of the raised surfaces have a real "
+                "element of the scene crossing IN FRONT OF THE LETTERING — a vine, a creeping root, "
+                "a coil, a claw, a limb, a wingtip, a tail, a curl of smoke, a lick of flame, a "
+                "hanging chain — passing over the words and continuing out the other side. Not a "
+                "shadow, not a glow, and not a vine parked on the corner of an otherwise empty "
+                "slab: a solid thing, drawn in the same ink, sitting in front of the letters the "
+                "way a snake crosses a scroll."
+                + well
+            )
+        else:
+            before_the_writing_ban(
+                "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
+                "picture with labels laid on it. At least TWO of the raised surfaces have a real "
+                "element of the scene crossing in FRONT of them — a vine, a creeping root, a claw, a "
+                "limb, a wingtip, a tail, a curl of smoke, a lick of flame, a hanging chain. Not a "
+                "shadow and not a glow: a solid thing, drawn in the same ink and lit by the same light "
+                "as the rest of the picture, passing over the surface and continuing out the other "
+                # The hard boundary. `cards.compositor` prints into each surface's interior, so an
+                # element crossing the middle of the pale strip lands under our own rules text and
+                # `check.contrast` fails the card into a repaint — trading the client's complaint for
+                # a legibility one. Overlapping the rim is free; overlapping the face costs a credit.
+                # Stated as geometry rather than as a ban, because bd mtg-z12's finding is that naming
+                # a thing summons it.
+                "side. Each crossing stays at that surface's OUTER EDGE or over one of its corners: "
+                "the broad flat middle of every surface stays completely clear and unbroken, because "
+                "that is where the card's text is printed. "
+                # MEASURED 2026-08-16, first batch under this clause: Craterhoof's vine crossed a
+                # quarter of the way along the top plate. `panels.detect` is asked to keep what
+                # crosses in front OUT of the box, did so correctly, and the box that came back
+                # started at x=0.27 — so the name was laid out from there and sat visibly off-centre
+                # on a plate that runs nearly the full width. The clause worked and the card looked
+                # wrong, which is the cheapest kind of bug to catch and the easiest to leave in.
+                #
+                # The top plate is the one surface where this costs something, because it is the only
+                # one whose text is left-aligned rather than centred, and it is the sliver a fanned
+                # hand shows. So its crossing is pushed out to the very end.
+                "On the plate across the top, keep any crossing within a sixth of one end or the "
+                "other. The long middle of that plate carries the card's name and must be clear "
+                "right across it."
+            )
 
     # INSERTED BEFORE THE TOP-PLATE CLAUSE, and the order is load-bearing. These insert in call
     # order, so whatever is added last sits closest to the lettering ban at the end. MEASURED

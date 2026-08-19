@@ -458,6 +458,38 @@ class LetteredBriefTests(SimpleTestCase):
         self.assertNotIn("CHARACTER FOR CHARACTER", composited)
         self.assertNotIn("Craterhoof Behemoth", composited)
 
+    def test_lettered_furniture_is_not_a_straight_sided_rectangle(self):
+        """CLIENT 2026-08-19: text boxes must flow through the card the way his snake
+        crosses a scroll. Straight-sided rectangles were for stamping into empty panels."""
+        brief = self._lettered()
+        self.assertNotIn("straight-sided rectangle", brief)
+        self.assertNotIn("broad flat middle of every surface stays completely clear", brief)
+        self.assertIn("OBJECT in this scene, not a rectangle", brief)
+        self.assertIn("stone arch", brief)
+
+    def test_lettered_overlap_crosses_in_front_of_the_letters(self):
+        brief = self._lettered({**GREEN, "mana_cost": "{5}{G}{G}{G}"})
+        self.assertIn("IN FRONT OF THE LETTERING", brief)
+        self.assertIn("snake crosses a scroll", brief)
+        self.assertIn("RIGHT-HAND END of the top plate is the exception", brief)
+        self.assertNotIn("OUTER EDGE or over one of its corners", brief)
+
+    def test_a_card_with_no_cost_is_not_told_to_keep_a_cost_well_bare(self):
+        """bd mtg-m8q: naming a well the card does not have is an instruction to paint one."""
+        brief = self._lettered(GREEN)
+        self.assertNotIn("RIGHT-HAND END of the top plate is the exception", brief)
+        self.assertNotIn("mana cost is stamped afterwards", brief)
+
+    def test_the_composited_overlap_and_rectangle_stay_on_the_composited_brief(self):
+        """The split is the point. Pinning only the lettered side would let a shared
+        rewrite quietly drop the compositor's interior-clear rule."""
+        brief = prompts.creative_full(GREEN)
+        self.assertIn("straight-sided rectangle", brief)
+        self.assertIn("OUTER EDGE or over one of its corners", brief)
+        self.assertIn("broad flat middle of every surface stays completely clear", brief)
+        self.assertNotIn("IN FRONT OF THE LETTERING", brief)
+        self.assertNotIn("snake crosses a scroll", brief)
+
 
 class LetteredManaCostTests(SimpleTestCase):
     """The one field the lettered mode does NOT hand over.
@@ -1203,8 +1235,12 @@ class LateClauseOrderTests(SimpleTestCase):
     CREATURE = {**GREEN, "power": "5", "toughness": "5"}
 
     def test_the_top_plate_restatement_stays_nearer_the_end_than_the_overlap(self):
-        brief = prompts.creative_full(self.CREATURE)
-        self.assertLess(brief.index("AND: THE OVERLAP"), brief.index("AND: THE TOP PLATE"))
+        for lettered in (False, True):
+            with self.subTest(lettered=lettered):
+                brief = prompts.creative_full(self.CREATURE, lettered=lettered)
+                self.assertLess(
+                    brief.index("AND: THE OVERLAP"), brief.index("AND: THE TOP PLATE"),
+                )
 
     def test_every_late_clause_still_lands_before_the_lettering_ban(self):
         """That ban's last place is itself measured — it had to move to the very end before it
