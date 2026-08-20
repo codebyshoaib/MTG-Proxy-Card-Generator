@@ -50,6 +50,39 @@ WHOLE ring, near enough ONE value — because a dark flat edge is a thing a nigh
 and a pale one is not. Nothing in the stored set except Sol Ring comes close.
 """
 
+BLACK = 32
+"""Brightest channel a flat ring may have and still be a BLACK SURROUND rather than a mat.
+
+The dark route above was fitted on 2026-08-17 to one card and is right about that card and wrong
+about a third of the client's favorites. `DARK_MAT_SHARE` treats "the whole ring is one flat
+colour of any value" as the defect, and an illustrated frame set inside a flat black surround is
+exactly that shape — so the gate the client's Sol Ring complaint bought us now fires on cards he
+chose himself.
+
+CLIENT 2026-08-13, and this is the sentence the constant encodes: his objection was to WHITE
+borders, and his concession in the same breath was "id be okay with black borders or black going
+around". Black is blessed. So the axis is not flat-versus-structured — Phase 0 measured that 7 of
+his 19 score below 1.0 on band structure, so a structure gate would fail a third of his corpus —
+it is PALE-VERSUS-DARK, and within dark it is black-versus-grey.
+
+MEASURED 2026-08-20, every stored card whose ring `_dark_mat` fires on, by peak channel:
+
+    accepted   his Avacyn 1, his Hullbreaker 1, his Howling Mine 3
+               tcggenerator.com's own: Island 0, Skitterbeam 0, Sewer Nemesis 1,
+               Warp World 2, Risky Move 2, Fiery Emancipation 2, Clement 25
+    rejected   Sol Ring (art deco) 60 — the card-shaped object the client circled
+               Elesh Norn 58 — the same defect, same population
+
+32 sits between 25 and 58. The gap is 2.3x rather than the 23-point chasm `PAPER` got, so this is
+the loosest constant in the module and is flagged as such. What makes it hold anyway is that the
+two populations are different KINDS of thing: black is an ink a designer chooses, and 50-60 grey
+is the model's untouched canvas showing under a card it drew as an object.
+
+ONE KNOWN CARD SITS ABOVE THIS AND IS NOT OURS: tcggenerator.com's Snow-Covered Island rings
+(47, 89, 98). It is their card, we have no client verdict on it, and nothing we generate has
+looked like it. If a real card of ours lands there, this constant is the first thing to re-fit.
+"""
+
 TOLERANCE = 26
 """How far a pixel may sit from the mat's own colour and still count as part of it."""
 
@@ -136,10 +169,15 @@ def _dark_mat(ring):
     """0.0, or the share of a ring that is one flat colour too dark for the light route.
 
     Only ever consulted when the light route found nothing — see `DARK_MAT_SHARE`.
+
+    Stands down on a BLACK ring, which is a surround the client asked for rather than a mat — see
+    `BLACK`. Everything else about this route keeps the constants it was fitted with.
     """
     if not ring:
         return 0.0
     colour = tuple(sorted(channel)[len(channel) // 2] for channel in zip(*ring))
+    if max(colour) <= BLACK:
+        return 0.0
     same = [p for p in ring if _near(p, colour)]
     share = len(same) / len(ring)
     if share < DARK_MAT_SHARE or _deviation(same) > DARK_MAT_FLAT:

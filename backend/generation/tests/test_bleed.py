@@ -6,6 +6,8 @@ scene lights its own edges, which is why the test is flatness and not brightness
 """
 
 import io
+import unittest
+from pathlib import Path
 
 from django.test import SimpleTestCase
 from PIL import Image, ImageDraw
@@ -209,6 +211,12 @@ class DarkMatTests(SimpleTestCase):
         self.assertLess(bleed.matted_share(_scene()), bleed.MATTED)
         self.assertLess(bleed.matted_share(_wash()), bleed.MATTED)
 
+    def test_the_grey_ground_this_route_was_built_for_still_fails(self):
+        """Paired with `BlackSurroundTests` on purpose: standing down on black must not stand down
+        on the 50-60 grey that bought this route in the first place."""
+        self.assertGreater(max(self.DARK), bleed.BLACK)
+        self.assertGreaterEqual(bleed.matted_share(_matted(60, colour=self.DARK)), bleed.MATTED)
+
     def test_a_dark_wash_is_not_a_dark_mat(self):
         """DARK_MAT_FLAT is 2.0 against FLAT_MAX's 4.0, because a night sky can approach a flat
         dark edge where nothing approaches a flat pale one. A gradient is the case that must not
@@ -220,3 +228,74 @@ class DarkMatTests(SimpleTestCase):
                 drift = (x * 7 + y * 11) % 40
                 pixels[x, y] = (34 + drift, 37 + drift, 44 + drift)
         self.assertLess(bleed.matted_share(image), bleed.MATTED)
+
+
+class BlackSurroundTests(SimpleTestCase):
+    """CLIENT 2026-08-13: "id be okay with black borders or black going around".
+
+    The dark route above was fitted to one card on 2026-08-17 and, until this, fired on three of
+    the client's nineteen favorites — Avacyn, Hullbreaker and Howling Mine all ring 1.000 flat at a
+    peak channel of 1, 1 and 3. Each one sets an illustrated frame inside a flat black surround,
+    which is the look he asked for, and each would have been repainted for having it.
+
+    `Phase 4` of PLAN-EXEMPLAR-PIVOT. The axis is pale-versus-dark and, within dark,
+    black-versus-grey — see `bleed.BLACK` for the calibration and for the one card above it.
+    """
+
+    BLACK = (1, 1, 1)  # his Avacyn and his Hullbreaker, measured
+    NEARLY = (2, 3, 2)  # his Howling Mine
+
+    def test_a_black_surround_is_not_a_mat(self):
+        for colour in (self.BLACK, self.NEARLY, (0, 0, 0)):
+            with self.subTest(colour=colour):
+                self.assertLess(bleed.matted_share(_matted(60, colour=colour)), bleed.MATTED)
+
+    def test_a_black_surround_is_not_cut(self):
+        """His run 11-23% deep, past MAX_DEPTH, so `trim` already left them alone. A shallow one
+        is the case that would have been cropped, and it is the one worth asserting."""
+        png = _png(_matted(20, colour=self.BLACK))
+        trimmed, depth = bleed.trim(png)
+        self.assertEqual(depth, 0.0)
+        self.assertEqual(trimmed, png, "the bytes came back changed — something cropped it")
+
+    def test_a_black_surround_is_not_reported(self):
+        """The gate that carried the entire cost of this bug: `trim` left these cards whole and
+        `matted` failed them anyway, which is a paid repaint per card."""
+        self.assertIsNone(check.matted(_matted(60, colour=self.BLACK)))
+
+    def test_a_white_mat_still_fails(self):
+        """The whole point of the module. Standing down on black must cost nothing here."""
+        self.assertIsNotNone(check.matted(_matted(18)))
+        self.assertIsNotNone(check.matted(_matted(60, colour=(255, 255, 255))))
+
+    def test_a_grey_ground_still_fails(self):
+        self.assertIsNotNone(check.matted(_matted(60, colour=(50, 53, 60))))
+
+
+class ClientCorpusTests(SimpleTestCase):
+    """All nineteen of his favorites, against the gates that judge our own cards.
+
+    This is the test that was missing. Every threshold in this module was fitted on OUR output, so
+    nothing ever asked whether the gates would pass the cards the client actually chose — and three
+    of them did not. A corpus test is the only shape of check that could have caught it.
+    """
+
+    CLIENT = (
+        Path(__file__).resolve().parents[4] / "Project Material" / "CLIENT-FAVORITES-2026-08-19"
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if not cls.CLIENT.is_dir():
+            raise unittest.SkipTest(f"{cls.CLIENT} is not checked out — client art is not code")
+
+    def test_not_one_of_his_favorites_reads_as_matted(self):
+        failed = []
+        cards = sorted(self.CLIENT.rglob("*.png"))
+        self.assertEqual(19, len(cards), "the folder changed — recalibrate before trusting this")
+        for path in cards:
+            with Image.open(path) as image:
+                if check.matted(image.convert("RGB")) is not None:
+                    failed.append(path.name)
+        self.assertEqual([], failed, "cards the client picked, which we would repaint")
