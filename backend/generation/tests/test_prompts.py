@@ -467,6 +467,25 @@ class LetteredBriefTests(SimpleTestCase):
         self.assertIn("OBJECT in this scene, not a rectangle", brief)
         self.assertIn("stone arch", brief)
 
+    def test_lettered_surface_list_does_not_ask_for_three_bars(self):
+        """LETTERED-OVERLAP v1/v2: the late overlap demanded an arch; the surface LIST
+        still said plate/strip/pale strip, and the list won. Both modes now share the
+        object list. Composited says leave it empty; lettered says the name sits IN it."""
+        brief = self._lettered()
+        self.assertNotIn("plate across the very top", brief)
+        self.assertNotIn("NARROW horizontal strip", brief)
+        self.assertNotIn("ONE broad pale strip low on the card", brief)
+        self.assertIn("stone arch, carved lintel, hanging banner", brief)
+        self.assertIn("pale hanging scroll, torn ribbon or weathered slab", brief)
+        self.assertIn("The name sits IN this object", brief)
+        composited = prompts.creative_full(GREEN)
+        self.assertNotIn("plate across the very top", composited)
+        self.assertNotIn("NARROW horizontal strip", composited)
+        self.assertNotIn("ONE broad pale strip low on the card", composited)
+        self.assertIn("stone arch, carved lintel, hanging banner", composited)
+        self.assertIn("Leave it empty — the name is printed on it afterwards", composited)
+        self.assertNotIn("The name sits IN this object", composited)
+
     def test_lettered_overlap_crosses_in_front_of_the_letters(self):
         brief = self._lettered({**GREEN, "mana_cost": "{5}{G}{G}{G}"})
         self.assertIn("IN FRONT OF THE LETTERING", brief)
@@ -474,21 +493,71 @@ class LetteredBriefTests(SimpleTestCase):
         self.assertIn("RIGHT-HAND END of the top plate is the exception", brief)
         self.assertNotIn("OUTER EDGE or over one of its corners", brief)
 
+    def test_lettered_overlap_restates_that_the_furniture_is_an_object(self):
+        """LETTERED-OVERLAP 2026-08-19: vines landed, the bars stayed. The object
+        sentence mid-brief lost; it has to sit in the late overlap or it loses again."""
+        brief = self._lettered()
+        self.assertIn("The name sits IN the object", brief)
+        self.assertIn("Three painted rectangles stacked on a picture", brief)
+        composited = prompts.creative_full(GREEN)
+        self.assertNotIn("The name sits IN the object", composited)
+        self.assertIn("Leave them empty — the lettering is printed on them afterwards", composited)
+        self.assertIn("Three painted rectangles stacked on a picture", composited)
+
     def test_a_card_with_no_cost_is_not_told_to_keep_a_cost_well_bare(self):
         """bd mtg-m8q: naming a well the card does not have is an instruction to paint one."""
         brief = self._lettered(GREEN)
         self.assertNotIn("RIGHT-HAND END of the top plate is the exception", brief)
         self.assertNotIn("mana cost is stamped afterwards", brief)
 
-    def test_the_composited_overlap_and_rectangle_stay_on_the_composited_brief(self):
-        """The split is the point. Pinning only the lettered side would let a shared
-        rewrite quietly drop the compositor's interior-clear rule."""
+    def test_the_composited_overlap_keeps_the_text_band_clear(self):
+        """COMPOSITED-OBJECT crops, 2026-08-19 night: vines through the rules, SORCERY on a
+        dragon, a name stamped across a curved arch. Organic furniture stays. The TEXT BAND
+        the compositor prints into — always axis-aligned — stays clear."""
         brief = prompts.creative_full(GREEN)
-        self.assertIn("straight-sided rectangle", brief)
+        self.assertNotIn("straight-sided rectangle", brief)
         self.assertIn("OUTER EDGE or over one of its corners", brief)
-        self.assertIn("broad flat middle of every surface stays completely clear", brief)
+        self.assertIn("TEXT BAND", brief)
+        self.assertIn("LEVEL STRAIGHT band", brief)
+        self.assertNotIn("passing over the middle of the surface", brief)
+        self.assertNotIn("IN FRONT OF THE FACE", brief)
+        self.assertIn("NO WRITING ANYWHERE ON THIS IMAGE", brief)
         self.assertNotIn("IN FRONT OF THE LETTERING", brief)
-        self.assertNotIn("snake crosses a scroll", brief)
+
+
+class NameLetteredBriefTests(SimpleTestCase):
+    """Product split: the name is handed over as data; type and rules stay empty."""
+
+    def _brief(self, face=None, **kwargs):
+        return prompts.creative_full(face or GREEN, name_lettered=True, **kwargs)
+
+    def test_the_name_is_handed_over_and_nothing_else(self):
+        brief = self._brief({**GREEN, "mana_cost": "{5}{G}{G}{G}"})
+        self.assertIn('"name": "Craterhoof Behemoth"', brief)
+        self.assertNotIn('"type_line"', brief)
+        self.assertNotIn('"rules_text"', brief)
+        self.assertIn("CHARACTER FOR CHARACTER", brief)
+        self.assertIn("the card's NAME lettered into the top object", brief)
+        self.assertIn("Leave that strip empty of writing", brief)
+
+    def test_the_writing_ban_whitelists_only_the_name(self):
+        brief = self._brief()
+        self.assertNotIn("NO WRITING ANYWHERE ON THIS IMAGE", brief)
+        self.assertIn("the ONLY writing anywhere on this image is the card's name", brief)
+        self.assertIn("not the type object", brief)
+        self.assertIn("NO MANA SYMBOLS", brief)
+
+    def test_the_cost_well_is_reserved(self):
+        brief = self._brief({**GREEN, "mana_cost": "{5}{G}{G}{G}"})
+        self.assertIn("OF THE TOP PLATE IS RESERVED", brief)
+        self.assertIn("The name sits IN this object", brief)
+        self.assertIn("Leave it empty — the type line is printed on it afterwards", brief)
+
+    def test_overlap_does_not_ask_for_vines_through_the_stamped_words(self):
+        brief = self._brief({**GREEN, "mana_cost": "{5}{G}{G}{G}"})
+        self.assertNotIn("IN FRONT OF THE LETTERING", brief)
+        self.assertIn("TEXT BAND", brief)
+        self.assertIn("The name sits IN the top object", brief)
 
 
 class LetteredManaCostTests(SimpleTestCase):
@@ -513,6 +582,21 @@ class LetteredManaCostTests(SimpleTestCase):
 
     def test_the_room_it_needs_is_reserved_instead(self):
         self.assertIn("OF THE TOP PLATE IS RESERVED", self._lettered())
+
+    def test_the_reserved_end_is_not_a_second_box(self):
+        """LETTERED-OVERLAP v3. 'STAYS COMPLETELY BARE / nothing on it at all' plus
+        'Do NOT paint a circle' came back as a pale rectangular cutout with our
+        Scryfall SVGs sitting in it (Tromell tan slot, Toski grey box, Tower
+        Winder grey hole). His 5 (1).png pips sit ON the name object's stone."""
+        brief = self._lettered()
+        start = brief.index("OF THE TOP PLATE IS RESERVED")
+        end = brief.index("THE RIGHT-HAND END OF THE NARROW STRIP")
+        cost = brief[start:end]
+        self.assertIn("NOT a second box", cost)
+        self.assertIn("pale cutout", cost)
+        self.assertIn("THE SAME MATERIAL", cost)
+        self.assertNotIn("nothing on it at all", cost)
+        self.assertNotIn("a circle, a gem, a disc or a boss", cost)
 
     def test_a_longer_cost_reserves_more_of_the_plate(self):
         """The reserve is derived from `compositor.NAME_CARD_SIZE`, not guessed, so a four-pip
@@ -577,14 +661,13 @@ class CreativeFullBriefTests(SimpleTestCase):
         # Framed cards have the edge material doing this job and have not drawn the complaint.
         self.assertNotIn("AND: THE OVERLAP", prompts.creative_full(GREEN, borderless=False))
 
-    def test_the_overlap_is_kept_off_the_face_the_compositor_prints_into(self):
-        """The overlap is free at a surface's rim and expensive across its middle: `compositor`
-        prints the rules text into the interior, so an element painted over it lands under our own
-        lettering and `check.contrast` fails the card into a repaint. Asking for the overlap
-        without bounding it trades the client's complaint for a legibility one."""
+    def test_the_overlap_is_kept_off_the_text_band(self):
+        """We stamp axis-aligned type. A vine through the middle of the face lands on the
+        words. Rim and corner are free; the TEXT BAND is not."""
         brief = prompts.creative_full(GREEN)
         self.assertIn("OUTER EDGE or over one of its corners", brief)
-        self.assertIn("broad flat middle of every surface stays completely clear", brief)
+        self.assertIn("TEXT BAND", brief)
+        self.assertNotIn("passing over the middle of the surface", brief)
 
     def test_surfaces_do_not_end_in_a_square_cut(self):
         """Every surface on the reference site's Craterhoof ends in a carved boss; ours end square,
@@ -701,11 +784,11 @@ class CreativeFullBriefTests(SimpleTestCase):
         for borderless in (True, False):
             with self.subTest(borderless=borderless):
                 brief = prompts.creative_full(GREEN, borderless=borderless)
-                self.assertIn("No surface may be painted above the top plate", brief)
+                self.assertIn("No surface may be painted above the name object", brief)
 
     def test_the_surfaces_are_demanded_and_lettering_is_forbidden(self):
         brief = prompts.creative_full(GREEN, "Comic Book")
-        for surface in ("plate across the very top", "NARROW horizontal strip", "broad pale strip"):
+        for surface in ("stone arch, carved lintel, hanging banner", "NARROW lintel, ribbon or carved band", "pale hanging scroll"):
             self.assertIn(surface, brief)
         self.assertIn("NO WRITING ANYWHERE", brief)
         self.assertIn("no fake writing", brief)
@@ -768,7 +851,7 @@ class CreativeFullBriefTests(SimpleTestCase):
                 # "across the lower third" until 2026-08-16, when that phrase was found to be
                 # capping the strip at the very size the next clause demanded of it. The
                 # invariant this test guards is ONE strip, not where it was said to sit.
-                self.assertIn("ONE broad pale strip low on the card", brief)
+                self.assertIn("ONE pale hanging scroll, torn ribbon or weathered slab", brief)
                 self.assertNotIn("SEPARATE pale strips", brief)
                 self.assertIn("Paint exactly these 3 raised surfaces", brief)
 
@@ -782,7 +865,7 @@ class CreativeFullBriefTests(SimpleTestCase):
         brief = prompts.creative_full({**GREEN, "power": "5"})
         self.assertIn("Their order down the card is fixed", brief)
         self.assertIn("TOPMOST thing on the card", brief)
-        self.assertIn("No surface may be painted above the top plate", brief)
+        self.assertIn("No surface may be painted above the name object", brief)
 
     def test_custom_art_notes_reach_the_brief_verbatim(self):
         """`custom_art_notes` in their generate payload. Placed after the style so it refines
@@ -811,8 +894,8 @@ class CreativeFullBriefTests(SimpleTestCase):
         """The compositor lays out axis-aligned lines, and their own Wheel of Fortune — rules set
         on a painted diagonal — is the one card in their gallery that is barely readable."""
         short = prompts.creative_full({**GREEN, "oracle_text": "Counter target spell."})
-        self.assertIn("Either way it is one panel", short)
-        self.assertIn("straight level top and bottom edges", short)
+        self.assertIn("Either way it is one pale object", short)
+        self.assertIn("printed lines can run", short)
 
     def test_the_length_hint_is_a_total_and_a_paragraph_count_never_the_text(self):
         """You cannot paint text you were never given — Atraxa came back fully lettered from this
@@ -1006,8 +1089,8 @@ class CreativeFullBriefTests(SimpleTestCase):
         warm gold lettering. compositor.panel_palette already picks gold-on-dark or ink-on-light
         from the pixels, so this is a brief change with no code behind it."""
         brief = prompts.creative_full(GREEN)
-        self.assertIn("narrow strip are DARK", brief)
-        self.assertIn("broad strip is LIGHT", brief)
+        self.assertIn("name object and the type object are DARK", brief)
+        self.assertIn("pale rules object is LIGHT", brief)
         self.assertIn("Do not paint all three the same value", brief)
         self.assertNotIn("Each surface must be PALE", brief)
 
@@ -1235,9 +1318,11 @@ class LateClauseOrderTests(SimpleTestCase):
     CREATURE = {**GREEN, "power": "5", "toughness": "5"}
 
     def test_the_top_plate_restatement_stays_nearer_the_end_than_the_overlap(self):
-        for lettered in (False, True):
-            with self.subTest(lettered=lettered):
-                brief = prompts.creative_full(self.CREATURE, lettered=lettered)
+        for lettered, name_lettered in ((False, False), (True, False), (False, True)):
+            with self.subTest(lettered=lettered, name_lettered=name_lettered):
+                brief = prompts.creative_full(
+                    self.CREATURE, lettered=lettered, name_lettered=name_lettered,
+                )
                 self.assertLess(
                     brief.index("AND: THE OVERLAP"), brief.index("AND: THE TOP PLATE"),
                 )

@@ -621,6 +621,22 @@ class ProofreadTests(SimpleTestCase):
         all, which is a structural fault before it is a text one."""
         self.assertIn("missing_title", self.codes(self.FACE, self.correct(title=None)))
 
+    def test_name_only_grades_the_painted_name_and_treats_other_writing_as_extra(self):
+        """Product hybrid: we stamp type/rules/P/T, so those surfaces must stay empty of
+        the model's lettering. The name is the one field that has to match Scryfall."""
+        name_only = self.read(("title_plate", self.FACE["name"]))
+        self.assertEqual(check.proofread(self.FACE, name_only, only=("title_plate",)), [])
+        wrong = self.read(("title_plate", "Thirsting Root"))
+        self.assertIn(
+            "text_wrong",
+            [p.code for p in check.proofread(self.FACE, wrong, only=("title_plate",))],
+        )
+        leaked = self.read(("title_plate", self.FACE["name"]), ("type_strip", "Sorcery"))
+        self.assertIn(
+            "text_extra",
+            [p.code for p in check.proofread(self.FACE, leaked, only=("title_plate",))],
+        )
+
 
 class CostCollisionTests(SimpleTestCase):
     """The cost stamped over the card's own name.
@@ -796,6 +812,11 @@ class ObstructionTests(SimpleTestCase):
     def test_a_bare_panel_passes(self):
         self.assertIsNone(check.obstructed(self.blank(), self.PANEL))
 
+    def test_a_thin_crossing_passes(self):
+        """COMPOSITED-OBJECT 2026-08-19: one vine across the scroll is the product (Tower Winder).
+        Four bars still bury the face — that stays refused."""
+        self.assertIsNone(check.obstructed(self.blank(bars=1), self.PANEL))
+
     def test_a_panel_painted_across_is_refused(self):
         problem = check.obstructed(self.blank(bars=4), self.PANEL)
         self.assertIsNotNone(problem)
@@ -805,7 +826,8 @@ class ObstructionTests(SimpleTestCase):
         """The retry hands the grader's own wording back to the model, so it has to name the fix and
         not just the fault (bd mtg-x6v)."""
         problem = check.obstructed(self.blank(bars=4), self.PANEL)
-        self.assertIn("OUTSIDE", problem.detail)
+        self.assertIn("TEXT BAND", problem.detail)
+        self.assertIn("through the words", problem.detail)
 
     def test_a_dark_slab_is_not_graded(self):
         """`compositor.foreground_mask` is for light surfaces only — on a dark slab it returns the
@@ -849,8 +871,8 @@ class HonestBoxTests(SimpleTestCase):
         image = Image.new("RGBA", (896, 1200), (24, 26, 30, 255))
         draw = ImageDraw.Draw(image)
         draw.rectangle((0.10 * 896, 0.65 * 1200, 0.90 * 896, 0.90 * 1200), fill=(238, 222, 188, 255))
-        # A branch across the panel's right third, exactly the Craterhoof case.
-        draw.rectangle((0.60 * 896, 0.65 * 1200, 0.72 * 896, 0.90 * 1200), fill=(48, 40, 30, 255))
+        # A mass across the panel's right third — not a thin vine. The clipped box still hides it.
+        draw.rectangle((0.55 * 896, 0.65 * 1200, 0.88 * 896, 0.90 * 1200), fill=(48, 40, 30, 255))
         clipped = {"rules": [(0.10, 0.65, 0.57, 0.90)]}
         honest = {"rules": [(0.10, 0.65, 0.90, 0.90)]}
         self.assertIsNone(check.obstructed(image, clipped), "a clipped box hides the branch")

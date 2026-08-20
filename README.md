@@ -5,13 +5,12 @@ The card's real game text is never invented — it comes from Scryfall.
 
 **Current state — Milestone 1 is not closed.** The client rejected the ten-style
 pack (`../Project Material/CLIENT-PACK-PIP-2026-08-19/`): look ≠ his examples,
-mana still off the title frames, text boxes must flow through the card. Lettered
-cost now stamps inside the inner face and `cost_off_rim` refuses a well that
-cannot fit. The lettered brief now asks for scene overlapping the letters; the
-composited path still keeps panels clear for our type. Next pack is his seven
-against his look, after the examples folder lands — not another style sheet.
-Creative Full letters the card; we stamp only the mana cost from Scryfall.
-Proxies have no set symbol. Art Only paints no furniture and no text.
+mana still off the title frames, text boxes must flow through the card. Creative
+Full lets Gemini letter the card (name, type, rules, P/T). We stamp only the mana
+cost from Scryfall. `--composited` stamps every field. `--name-lettered` letters
+only the name.
+Do not send a pack until a daily run of his seven against `5 (1).png` looks like
+his examples. Proxies have no set symbol. Art Only paints no furniture and no text.
 Prototype UI is in `frontend/`.
 
 Spec: `../BUILD-SPEC.md`. Proposal: `../Project Material/`.
@@ -53,10 +52,12 @@ Fonts and mana symbols are **vendored and committed**, never loaded from the sys
 
 ## Two decisions worth knowing before reading the code
 
-**Creative Full is lettered.** The AI paints the art and the game text as one picture —
-that is the only way a vine can sit in front of the words. We stamp only the mana cost
-(Scryfall SVGs). `check.proofread` reads every other field back against Scryfall; a
-mismatch repaints. Art Only paints no text at all.
+**Creative Full is lettered.** The AI paints name, type, rules and P/T into the
+scene so the name can live in an arch or banner and art can cross the words —
+that is the only path that has looked like his `5 (1).png`. We stamp Scryfall's
+mana pips into a reserved well on the name object (the one field the model got
+wrong more than once). `--composited` stamps every field. `--name-lettered` letters
+only the name. Art Only paints no text at all.
 
 **Mana pips are Scryfall SVGs, not the Mana font.** BUILD-SPEC §16 picked the Mana
 font; that turned out not to work. Its glyphs are monochrome and hybrid/Phyrexian pips

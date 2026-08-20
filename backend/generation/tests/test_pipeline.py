@@ -129,7 +129,7 @@ class RepaintTests(SimpleTestCase):
                     # pale one keeps these tests about their own subject rather than the panel.
                     return_value=(Image.new("RGB", (179, 240), (205, 200, 190)), False)), \
                 mock.patch.object(pipeline.check, "inspect", return_value=problems):
-            result = pipeline.creative_full(FACE, **kwargs)
+            result = pipeline.creative_full(FACE, pipeline.Options(lettered=False, name_lettered=False), **kwargs)
         return generate, result
 
     def test_a_faulty_card_is_repainted_once_and_then_accepted(self):
@@ -223,7 +223,7 @@ class MissingShieldTests(SimpleTestCase):
                     # pale one keeps these tests about their own subject rather than the panel.
                     return_value=(Image.new("RGB", (179, 240), (205, 200, 190)), False)), \
                 mock.patch.object(pipeline.check, "inspect", side_effect=inspect):
-            pipeline.creative_full(face, attempts=2)
+            pipeline.creative_full(face, pipeline.Options(lettered=False, name_lettered=False), attempts=2)
         return generate, seen["panels"]
 
     def test_an_undetected_tab_reaches_the_grader_unfilled(self):
@@ -246,12 +246,12 @@ class MissingShieldTests(SimpleTestCase):
 
 
 class LetteredTests(SimpleTestCase):
-    """The lettered path: the model sets every field but the cost, and the cost is graded.
+    """The product path: the model sets every field but the cost, and the cost is graded.
 
     Two things have to hold or the mode must not ship. It costs the SAME two calls a composited
     card does — `read_back` replaces `detect`, it does not join it — and `proofread` runs, because
     `CLAUDE.md`'s surviving rule is that a card whose printed text differs from Scryfall must never
-    ship silently.
+    ship silently. `Options()` is this path.
     """
 
     READ = {
@@ -272,9 +272,7 @@ class LetteredTests(SimpleTestCase):
                 mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
                 mock.patch.object(pipeline.check, "matted", return_value=None), \
                 mock.patch.object(pipeline.gemini, "generate", return_value=_jpeg()) as generate:
-            result = pipeline.creative_full(
-                FACE, pipeline.Options(lettered=True), **kwargs
-            )
+            result = pipeline.creative_full(FACE, pipeline.Options(), **kwargs)
         return generate, read, detect, grade, brief, result
 
     def test_it_reads_the_card_back_instead_of_detecting_blanks(self):
@@ -297,9 +295,11 @@ class LetteredTests(SimpleTestCase):
         self.assertEqual(brief.call_args.kwargs["corrections"], [wrong.detail])
         self.assertEqual([p.code for p in result.problems], ["text_wrong"])
 
-    def test_the_brief_is_asked_for_in_lettered_mode(self):
-        _, _, _, _, brief, _ = self._run()
+    def test_the_product_default_is_lettered(self):
+        _, _, detect, _, brief, _ = self._run()
         self.assertTrue(brief.call_args.kwargs["lettered"])
+        self.assertFalse(brief.call_args.kwargs["name_lettered"])
+        detect.assert_not_called()
 
     def test_a_badge_on_the_type_line_repaints(self):
         """SIGNOFF 2026-08-19, Elesh Norn. The text gate passed; the slot still had a set mark.
@@ -325,6 +325,74 @@ class LetteredTests(SimpleTestCase):
         self.assertEqual(generate.call_count, 2)
         self.assertEqual(brief.call_args.kwargs["corrections"], [rim.detail])
         self.assertEqual([p.code for p in result.problems], ["cost_no_room"])
+
+
+class NameLetteredTests(SimpleTestCase):
+    """Opt-in hybrid: the model letters the name; we stamp type, rules, P/T, mana.
+
+    Failed as the daily path on his seven (2026-08-20): named-detect dropped blank
+    type/rules/P/T, names still sat on bars. Kept as `--name-lettered`. Same two calls —
+    `detect(..., named=True)` replaces a blank detect, it does not join `read_back`.
+    """
+
+    LOCATED = {
+        "title": (0.05, 0.03, 0.95, 0.11),
+        "name": (0.08, 0.04, 0.55, 0.10),
+        "type": (0.05, 0.58, 0.95, 0.64),
+        "rules": [(0.06, 0.65, 0.94, 0.90)],
+        "text": [{"where": "title_plate", "text": "Terror of the Peaks"}],
+    }
+
+    def _run(self, problems=(), **kwargs):
+        with mock.patch.object(pipeline, "prepare", return_value=(FACE, None, False)), \
+                mock.patch.object(pipeline.prompts, "creative_full", return_value="brief") as brief, \
+                mock.patch.object(pipeline.bleed, "trim", side_effect=lambda png: (png, 0.0)), \
+                mock.patch.object(pipeline.panels, "detect", return_value=self.LOCATED) as detect, \
+                mock.patch.object(pipeline.panels, "read_back") as read, \
+                mock.patch.object(
+                    pipeline.compositor, "compose",
+                    return_value=(Image.new("RGB", (179, 240), (205, 200, 190)), False),
+                ) as compose, \
+                mock.patch.object(
+                    pipeline.check, "proofread",
+                    side_effect=lambda *a, **k: list(problems),
+                ) as grade, \
+                mock.patch.object(pipeline.check, "inspect", return_value=[]), \
+                mock.patch.object(pipeline.check, "cost_collides", return_value=None), \
+                mock.patch.object(pipeline.check, "cost_off_rim", return_value=None), \
+                mock.patch.object(pipeline.check, "obstructed", return_value=None), \
+                mock.patch.object(pipeline.check, "contrast", return_value=None), \
+                mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
+                mock.patch.object(pipeline.check, "matted", return_value=None), \
+                mock.patch.object(pipeline.gemini, "generate", return_value=_jpeg()) as generate:
+            result = pipeline.creative_full(
+                FACE, pipeline.Options(lettered=False, name_lettered=True), **kwargs
+            )
+        return generate, detect, read, grade, brief, compose, result
+
+    def test_it_detects_named_surfaces_instead_of_reading_the_body_back(self):
+        _, detect, read, _, brief, compose, _ = self._run()
+        self.assertTrue(brief.call_args.kwargs["name_lettered"])
+        self.assertFalse(brief.call_args.kwargs["lettered"])
+        detect.assert_called_once()
+        self.assertTrue(detect.call_args.kwargs["named"])
+        read.assert_not_called()
+        self.assertTrue(compose.call_args.kwargs["name_lettered"])
+
+    def test_a_wrong_name_repaints(self):
+        wrong = check.Problem(
+            "text_wrong",
+            "the card's name reads 'Terror' and must read 'Terror of the Peaks'",
+        )
+        generate, _, _, grade, brief, _, result = self._run(problems=[wrong])
+        self.assertEqual(grade.call_count, 2)
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(brief.call_args.kwargs["corrections"], [wrong.detail])
+        self.assertEqual([p.code for p in result.problems], ["text_wrong"])
+
+    def test_proofread_is_asked_for_the_name_only(self):
+        _, _, _, grade, _, _, _ = self._run()
+        self.assertEqual(grade.call_args.kwargs["only"], ("title_plate",))
 
 
 class StoredBoxesTests(SimpleTestCase):
@@ -356,7 +424,7 @@ class StoredBoxesTests(SimpleTestCase):
                 mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
                 mock.patch.object(pipeline.check, "matted", return_value=None), \
                 mock.patch.object(pipeline.gemini, "generate", return_value=_jpeg()) as generate:
-            result = pipeline.creative_full(self.FACE, **kwargs)
+            result = pipeline.creative_full(self.FACE, pipeline.Options(lettered=False, name_lettered=False), **kwargs)
         return generate, detect, result
 
     def test_stored_boxes_skip_the_vision_call_entirely(self):
@@ -383,5 +451,5 @@ class StoredBoxesTests(SimpleTestCase):
                 mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
                 mock.patch.object(pipeline.check, "matted", return_value=None), \
                 mock.patch.object(pipeline.gemini, "generate", return_value=_jpeg()):
-            pipeline.creative_full(FACE, attempts=2)
+            pipeline.creative_full(FACE, pipeline.Options(lettered=False, name_lettered=False), attempts=2)
         self.assertEqual(detect.call_count, 2, "the repaint reused the first attempt's boxes")

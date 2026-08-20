@@ -250,6 +250,116 @@ SECOND, report bounding boxes as [ymin, xmin, ymax, xmax] normalised 0-1000:
   the flat part the text sits on, inside any rim and clear of anything crossing in front of it."""
 
 
+NAMED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **SCHEMA["properties"],
+        "name": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the card's name lettering"},
+        "text": READ_SCHEMA["properties"]["text"],
+    },
+}
+
+NAMED_PROMPT = """This is a fantasy trading card. The NAME is lettered into the top object. The type strip, the pale rules strip, and the P/T tab are BLANK — no writing on them.
+
+Two jobs.
+
+FIRST, transcribe. Find every separate patch of writing anywhere on this card and report it in
+"text", one entry per patch. For each one give:
+
+- "text": exactly what it says, CHARACTER FOR CHARACTER. Transcribe what is actually printed, not
+  what you expect a card like this to say. Do not correct spelling, do not expand abbreviations,
+  do not tidy punctuation, and do not fill in a word you cannot read — if a word is obscured or
+  illegible, write it as [?]. Keep line breaks out: run each patch together as one line.
+- "where": which surface it sits on, one of:
+    title_plate  the plate across the very top
+    type_strip   the narrow horizontal strip lower down
+    rules_panel  the broad pale strip holding body text
+    tab          the small raised tab near the bottom-right corner
+    artwork      painted into the scene itself
+    edge         on the card's outer decorated edge
+    other        any other surface
+
+The name on the top object is expected. Still report EVERY other patch — writing on the type
+strip, the rules panel, the tab, the edge, or extra words besides the name.
+
+SECOND, report bounding boxes as [ymin, xmin, ymax, xmax] normalised 0-1000:
+
+- "title": the plate across the very top, the one the card's name is lettered on. Give the plate's
+  FULL extent from its left end to its right end, inside its carved rim.
+- "name": the box of the card's NAME as it is lettered on that plate — the printed letters only,
+  from the first letter to the last, not the whole plate.
+- "type": the NARROW horizontal strip lower down, directly above the broad slab. It is BLANK.
+- "rules": a LIST, one box per pale text strip, top to bottom. These are BLANK.
+- "pt": the small raised tab near the BOTTOM-RIGHT, if one is present. It is BLANK.
+
+Then report two kinds of DEFECT:
+
+- "spare": every OTHER blank raised surface not counted above.
+- "marks": every patch of painted WRITING that is NOT the card's name on the title plate. Do not
+  list the name as a mark. Do list a type line, rules text, a set symbol, runes, a signature.
+
+Give the INNER usable area of each surface. A THIN thing crossing in FRONT of the face does not
+clip the box.
+
+The card's outer edge decoration is NOT one of the surfaces. Omit a key if that surface is not
+present. Do not guess."""
+
+
+NAMED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        **SCHEMA["properties"],
+        "name": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the card's name lettering"},
+        "text": READ_SCHEMA["properties"]["text"],
+    },
+}
+
+NAMED_PROMPT = """This is a fantasy trading card. The NAME is lettered into the top object. The type strip, the pale rules strip, and the P/T tab are BLANK — no writing on them.
+
+Two jobs.
+
+FIRST, transcribe. Find every separate patch of writing anywhere on this card and report it in
+"text", one entry per patch. For each one give:
+
+- "text": exactly what it says, CHARACTER FOR CHARACTER. Transcribe what is actually printed, not
+  what you expect a card like this to say. Do not correct spelling, do not expand abbreviations,
+  do not tidy punctuation, and do not fill in a word you cannot read — if a word is obscured or
+  illegible, write it as [?]. Keep line breaks out: run each patch together as one line.
+- "where": which surface it sits on, one of:
+    title_plate  the plate across the very top
+    type_strip   the narrow horizontal strip lower down
+    rules_panel  the broad pale strip holding body text
+    tab          the small raised tab near the bottom-right corner
+    artwork      painted into the scene itself
+    edge         on the card's outer decorated edge
+    other        any other surface
+
+The name on the top object is expected. Still report EVERY other patch — writing on the type
+strip, the rules panel, the tab, the edge, or extra words besides the name.
+
+SECOND, report bounding boxes as [ymin, xmin, ymax, xmax] normalised 0-1000:
+
+- "title": the plate across the very top, the one the card's name is lettered on. Give the plate's
+  FULL extent from its left end to its right end, inside its carved rim.
+- "name": the box of the card's NAME as it is lettered on that plate — the printed letters only,
+  from the first letter to the last, not the whole plate.
+- "type": the NARROW horizontal strip lower down, directly above the broad slab. It is BLANK.
+- "rules": a LIST, one box per pale text strip, top to bottom. These are BLANK.
+- "pt": the small raised tab near the BOTTOM-RIGHT, if one is present. It is BLANK.
+
+Then report two kinds of DEFECT:
+
+- "spare": every OTHER blank raised surface not counted above.
+- "marks": every patch of painted WRITING that is NOT the card's name on the title plate. Do not
+  list the name as a mark. Do list a type line, rules text, a set symbol, runes, a signature.
+
+Give the INNER usable area of each surface. A THIN thing crossing in FRONT of the face does not
+clip the box.
+
+The card's outer edge decoration is NOT one of the surfaces. Omit a key if that surface is not
+present. Do not guess."""
+
+
 def read_back(png, face):
     """What does this card ACTUALLY say, plus the boxes we still print into.
 
@@ -297,6 +407,18 @@ def read_back(png, face):
     if rules:
         read["rules"] = sorted(rules, key=lambda box: box[1])
     return read
+
+
+def _overlap_share(inner, outer):
+    """How much of `inner` sits inside `outer`, 0-1. Boxes are (x0, y0, x1, y1)."""
+    x0 = max(inner[0], outer[0])
+    y0 = max(inner[1], outer[1])
+    x1 = min(inner[2], outer[2])
+    y1 = min(inner[3], outer[3])
+    if x1 <= x0 or y1 <= y0:
+        return 0.0
+    area = (inner[2] - inner[0]) * (inner[3] - inner[1])
+    return 0.0 if area <= 0 else ((x1 - x0) * (y1 - y0)) / area
 
 
 def _usable(box):
@@ -392,7 +514,7 @@ def _from_crop(box, region=PT_CROP):
     )
 
 
-def detect(png, paragraphs=None, expect_pt=False):
+def detect(png, paragraphs=None, expect_pt=False, named=False):
     """{'title': box, 'rules': [box, ...], ...} in 0-1 fractions of the canvas.
 
     Fractions rather than pixels so the result survives the print-resolution upscale, and so a
@@ -405,8 +527,13 @@ def detect(png, paragraphs=None, expect_pt=False):
 
     `spare` and `marks` are the two FAULTS, also lists: extra blank surfaces nothing will be
     printed on, and painted lettering or insignia. `generation.check` turns them into a repaint.
+
+    `named=True` is the product hybrid: the top object already has the name lettered into it.
+    The blank-furniture prompt would report that name as `marks` and miss the title. This keeps
+    one vision call — it adds the name box and a transcription, it does not call `read_back`.
     """
-    prompt = PROMPT
+    prompt = NAMED_PROMPT if named else PROMPT
+    schema = NAMED_SCHEMA if named else SCHEMA
     if paragraphs:
         prompt += (
             f"\n\nFor reference, this card's rules text has {paragraphs} separate "
@@ -428,7 +555,7 @@ def detect(png, paragraphs=None, expect_pt=False):
         contents=contents,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=SCHEMA,
+            response_schema=schema,
             temperature=0,
         ),
     )
@@ -458,4 +585,23 @@ def detect(png, paragraphs=None, expect_pt=False):
     detail = _usable(raw.get("pt_detail"))
     if detail:
         panels["pt"] = _from_crop(detail)
+    if named:
+        name = _usable(raw.get("name"))
+        if name:
+            panels["name"] = name
+            # The name is expected writing on the title. `inspect` treats marks ON a plate as
+            # painted_marks, so a name reported as a mark would fail every hybrid card.
+            overlap = []
+            for mark in panels.get("marks") or []:
+                if _overlap_share(mark, name) < 0.5:
+                    overlap.append(mark)
+            if overlap:
+                panels["marks"] = overlap
+            elif "marks" in panels:
+                del panels["marks"]
+        panels["text"] = [
+            {"where": patch.get("where") or "other", "text": patch.get("text") or ""}
+            for patch in (raw.get("text") or [])
+            if (patch.get("text") or "").strip()
+        ]
     return panels

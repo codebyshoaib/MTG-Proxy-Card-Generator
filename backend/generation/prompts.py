@@ -989,7 +989,7 @@ def _has_tab(face, lettered=False):
     return face.get("power") is not None or (lettered and face.get("loyalty") is not None)
 
 
-def _writing_ban(borderless, lettered):
+def _writing_ban(borderless, lettered, name_lettered=False):
     """The last sentence of the brief, and its last place is measured — see the call site.
 
     INVERTED, NOT DELETED, when the model letters the card itself. The ban's job was never "no
@@ -997,6 +997,9 @@ def _writing_ban(borderless, lettered):
     invisible (`creative_full`'s own docstring: Swords to Plowshares printed `Instant — <runic
     script>`). In lettered mode the given strings become a whitelist and everything else stays
     banned, so the clause keeps both its position and its force.
+
+    `name_lettered` is the product split: only the name is on the whitelist. Type, rules and P/T
+    stay banned because we stamp them — a model-painted type line under our type line is two copies.
     """
     elsewhere = "not the scene" if borderless else "not the edge material"
     if lettered:
@@ -1010,6 +1013,20 @@ def _writing_ban(borderless, lettered):
             "watermark, no emblem, no set symbol, AND NO MANA SYMBOLS — the mana cost is not one "
             "of the strings above and is not yours to paint. Every part of every surface that is "
             "not carrying one of those strings is bare stone, bare wood, bare metal — blank."
+        )
+    if name_lettered:
+        return (
+            "ABSOLUTE REQUIREMENT, overriding everything above: the ONLY writing anywhere on this "
+            "image is the card's name, the exact string given at the top, IN the top object, "
+            f"exactly once. Nothing else carries a mark of any kind — not the artwork, {elsewhere}"
+            ", not the type object, not the pale rules object, not the tab, not the gaps between "
+            "the surfaces. Those other surfaces stay bare stone, bare wood, bare metal — blank — "
+            "because real type, rules and numerals are printed onto them afterwards. No extra "
+            "words, no invented names, no flavour text, no artist credit, no collector number, "
+            "no copyright line, no glyphs, no decorative script, no fake writing, no watermark, "
+            "no emblem, no set symbol, AND NO MANA SYMBOLS — the mana cost is not yours to paint. "
+            "If you are tempted to letter the type line or the rules, leave those objects empty "
+            "instead."
         )
     in_art = "not anywhere in the artwork" if borderless else "not on the edge material"
     return (
@@ -1102,12 +1119,11 @@ def _lettering_block(face):
     if face.get("loyalty") is not None:
         card["loyalty"] = str(face["loyalty"])
     where = [
-        ('"name"', "the LEFT-HAND part of the plate across the top, left-aligned — see the "
-         "reserved end below."),
-        ('"type_line"', "the narrow strip, LEFT-ALIGNED, and NOWHERE ELSE. The RIGHT-HAND END "
-         "of that strip stays BARE — see below. Printing it a second time anywhere on the card "
-         "is a failed image."),
-        ('"rules_text"', "the broad pale strip, and nowhere else. A blank line between "
+        ('"name"', "IN the object across the top, left-aligned — see the reserved end below."),
+        ('"type_line"', "IN the narrow type object, LEFT-ALIGNED, and NOWHERE ELSE. The "
+         "RIGHT-HAND END of that object stays BARE — see below. Printing it a second time "
+         "anywhere on the card is a failed image."),
+        ('"rules_text"', "IN the pale rules object, and nowhere else. A blank line between "
          "paragraphs; text in ( ) is reminder text and is set in italics."),
         ('"power_toughness"', "the small tab at the bottom right."),
         ('"loyalty"', "the small tab at the bottom right — this card's starting loyalty."),
@@ -1126,14 +1142,19 @@ def _lettering_block(face):
         # ONLY ON A CARD THAT HAS A COST. A land or a suspend-only card has none, and a card told
         # to keep room for a thing it does not have has been told to paint the thing — the same
         # bd mtg-m8q lesson that took the P/T tab and the loyalty field out of the other briefs.
+        #
+        # LETTERED-OVERLAP v3 (bd mtg-2su): "STAYS COMPLETELY BARE / nothing on it at all" plus
+        # "Do NOT paint a circle, a gem, a disc" came back as a pale rectangular cutout with our
+        # pips sitting in it. Reserve emptiness of LETTERS, not emptiness of material.
         *(
             [
-                f"THE RIGHT-HAND {_cost_room(cost) * 100:.0f}% OF THE TOP PLATE IS RESERVED AND "
-                "STAYS COMPLETELY BARE — bare stone, bare metal, bare wood, nothing on it at all. "
-                "The name stops short of it. This card's mana cost is stamped into that space "
-                "afterwards from real Magic symbol artwork, so anything painted there collides "
-                "with it. Do NOT paint a mana cost, a mana symbol, a circle, a gem, a disc or a "
-                "boss anywhere on the top plate.",
+                f"THE RIGHT-HAND {_cost_room(cost) * 100:.0f}% OF THE TOP PLATE IS RESERVED for "
+                "the mana cost stamped afterwards from real Magic symbol artwork. That reserved "
+                "end is THE SAME MATERIAL as the rest of the name object — the stone, wood or "
+                "metal continues through, unbroken. It is NOT a second box, not a pale cutout, "
+                "not a hole, not a window, not a slot, not a separate plaque. The name stops "
+                "short of it. Leave it empty of letters and of any painted symbol. Do NOT paint "
+                "a mana cost, a mana symbol, a second rectangle or a cutout there.",
                 "",
             ]
             if (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
@@ -1174,9 +1195,53 @@ def _lettering_block(face):
     ]
 
 
+def _name_lettering_block(face):
+    """The name handed over as DATA. Type, rules and P/T stay ours to stamp.
+
+    CLIENT 2026-08-19 favorites: Avacyn's title follows the banner, Kaalia uses a custom font,
+    Counterspell uses a logo. The compositor prints a straight line and cannot do that. The name
+    is therefore the model's, graded by `check.proofread(..., only=('title_plate',))`. Every other
+    field stays withheld — Atraxa came back fully lettered the moment it was shown the words.
+    The cost well is the same reservation `_lettering_block` uses, because we still stamp pips.
+    """
+    card = {"name": face["name"]}
+    return [
+        "",
+        "THE CARD'S NAME, as data. The string below is EXACT. Reproduce it CHARACTER FOR "
+        "CHARACTER — do not paraphrase, do not shorten, do not rephrase, do not invent and do "
+        "not correct anything, including punctuation and capitalisation:",
+        "",
+        json.dumps(card, indent=2, ensure_ascii=False),
+        "",
+        "WHERE IT GOES: \"name\" sits IN the object across the top, left-aligned — see the "
+        "reserved end below. It appears EXACTLY ONCE. The letters belong to that object: they "
+        "may follow its silhouette (a curve, a carved banner, a custom title). Do not put the "
+        "name anywhere else.",
+        "",
+        # Same well as full lettered. Lands have no cost; a card told to reserve a thing it does
+        # not have has been told to paint it (bd mtg-m8q).
+        *(
+            [
+                f"THE RIGHT-HAND {_cost_room(cost) * 100:.0f}% OF THE TOP PLATE IS RESERVED for "
+                "the mana cost stamped afterwards from real Magic symbol artwork. That reserved "
+                "end is THE SAME MATERIAL as the rest of the name object — the stone, wood or "
+                "metal continues through, unbroken. It is NOT a second box, not a pale cutout, "
+                "not a hole, not a window, not a slot, not a separate plaque. The name stops "
+                "short of it. Leave it empty of letters and of any painted symbol. Do NOT paint "
+                "a mana cost, a mana symbol, a second rectangle or a cutout there.",
+                "",
+            ]
+            if (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
+            else []
+        ),
+        "Do NOT letter the type line, the rules text, a power/toughness, a loyalty numeral, or "
+        "any other word. Those surfaces stay empty. Real text is printed onto them afterwards.",
+    ]
+
+
 def creative_full(
     face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None,
-    borderless=True, corrections=(), lettered=False,
+    borderless=True, corrections=(), lettered=False, name_lettered=False,
 ):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
@@ -1215,7 +1280,15 @@ def creative_full(
     The framed edge is kept rather than deleted: it is what ~20 of the reference site's own 24
     gallery cards do, it is the measured cure for plates that read as pasted on, and it is the
     fallback the client also accepted ("id be okay with black borders or black going around").
+
+    REVISED 2026-08-20: the product default is `lettered`. The name-only hybrid
+    (`name_lettered`) produced 0/7 of his cards with names in objects and stampable
+    body furniture. His favorites letter the whole card into the scene. We still
+    withhold the mana cost and stamp Scryfall pips. `--composited` stamps every field.
     """
+    if lettered:
+        name_lettered = False
+    paints_name = lettered or name_lettered
     # MEASURED 2026-08-10: given the name and the rules text, the model paints them. Atraxa came
     # back fully lettered — its own name in the top plate, "Legendary Phyrexian Angel Horror" in
     # the strip, mana symbols, a Phyrexian watermark — and Terror printed a literal "P/T".
@@ -1247,22 +1320,34 @@ def creative_full(
 
     lines = [
         "You are a senior Magic: The Gathering card artist"
-        + (" AND its letterer." if lettered else "."),
+        + (" AND its letterer." if lettered else " AND its letterer of the name." if name_lettered else "."),
         "",
         "Paint a COMPLETE fantasy trading card face — the artwork and the card's raised surfaces "
         "together, as one integrated illustration, "
         + ("with ALL of its lettering set into it." if lettered
+           else "with the card's NAME lettered into the top object and NO other writing on it."
+           if name_lettered
            else "with NO writing anywhere on it."),
         "",
         "The card:",
         # The name is WITHHELD in composited mode — briefing the card like a licensed crossover
-        # is what stops the model painting a name it was shown. In lettered mode it is shown the
-        # name anyway, to print, so withholding it from the subject line buys nothing and costs
+        # is what stops the model painting a name it was shown. When it letters the name, it is
+        # shown the name anyway, so withholding it from the subject line buys nothing and costs
         # the likeness.
-        _subject(face, licensed=licensed if lettered else True),
+        _subject(face, licensed=licensed if paints_name else True),
     ]
     if lettered:
         lines += _lettering_block(face)
+    elif name_lettered:
+        lines += _name_lettering_block(face)
+        if abilities:
+            total_chars = sum(len(paragraph) for paragraph in abilities)
+            lines.append(
+                f"Leave room for about {total_chars} characters of text, in "
+                f"{len(abilities)} separate {'paragraph' if len(abilities) == 1 else 'paragraphs'}, "
+                "in the broad pale strip low on the card. Size that strip to hold it comfortably. "
+                "Leave that strip empty of writing."
+            )
     elif abilities:
         # Only the LENGTH, never the text: the model paints any rules text it is shown, and
         # Atraxa came back fully lettered from exactly this line's predecessor.
@@ -1303,17 +1388,39 @@ def creative_full(
     # canvas. A strip holding two lines can be set far larger than a slab holding five, and our
     # single slab is what forced `textlayout.fit` down to 55px. bd mtg-yp3 saw a second panel and
     # filed it as variance; across their gallery it is the norm.
+    # The surface LIST is what gets painted. "plate / strip / pale strip" produced three stacked
+    # rectangles through two lettered generations (LETTERED-OVERLAP v1/v2 vs 5 (1).png) even after
+    # the late overlap demanded a stone arch — and the same nouns made the composited path look
+    # like cheap stamping (CLIENT 2026-08-19). Both modes share the object list. Lettered: the
+    # name sits IN the object. Composited: leave it empty, we print onto it afterwards.
+    ends = (
+        " and NARROWER than the card — its ends stop well short of both side edges, with "
+        "painted scene either side of it and the picture running behind it"
+        if borderless
+        else ", held at both ends by the edge material"
+    )
+    name_on = (
+        ". The name sits IN this object. It is not a painted rectangular bar. Do not omit "
+        "this piece — every card has one"
+        if paints_name
+        else ". Leave it empty — the name is printed on it afterwards. It is not a painted "
+        "rectangular bar. Do not omit this piece — every card has one"
+    )
+    type_on = (
+        ". The type line sits IN this object. It is not a second painted rectangular bar. "
+        "Do not omit this piece"
+        if lettered
+        else ". Leave it empty — the type line is printed on it afterwards. It is not a second "
+        "painted rectangular bar. Do not omit this piece"
+    )
     surfaces = [
-        "a plate across the very top, no taller than 1/10th of the card"
-        + (
-            " and NARROWER than the card — its ends stop well short of both side edges, with "
-            "painted scene either side of it and the picture running behind it"
-            if borderless
-            else ", held at both ends by the edge material"
-        )
-        + ". Do not omit this piece — every card has one",
-        "a NARROW horizontal strip lower down, about 1/16th of the card's height, sitting "
-        "directly above the broad pale strip below it. Do not omit this piece",
+        "a stone arch, carved lintel, hanging banner or curl of vine across the very top, "
+        "no taller than 1/10th of the card"
+        + ends
+        + name_on,
+        "a NARROW lintel, ribbon or carved band lower down, about 1/16th of the card's "
+        "height, sitting directly above the pale rules object below it"
+        + type_on,
     ]
     # PER CARD, not one wish for every card (bd mtg-8h9). "Tall enough to hold every line of
     # text" cannot be acted on by a model that is never shown the text — and is never shown it on
@@ -1355,11 +1462,17 @@ def creative_full(
         )
     else:
         how_tall = "tall enough to hold every line of text comfortably with a margin"
+    rules_on = (
+        ". The rules text sits IN this object. "
+        if lettered
+        else ". Leave it empty — the rules text is printed on it afterwards. "
+    )
     band = (
-        f"ONE broad pale strip low on the card, its foot about {STRIP_FOOT * 100:.0f}% of the way "
-        f"down and its top edge about {top} of the way down, with painted scene continuing below "
-        "it to the bottom edge, " + how_tall
-        + ". This is the single most important surface on the card: it must not be cramped, and "
+        f"ONE pale hanging scroll, torn ribbon or weathered slab low on the card, its foot "
+        f"about {STRIP_FOOT * 100:.0f}% of the way down and its top edge about {top} of the "
+        "way down, with painted scene continuing below it to the bottom edge, " + how_tall
+        + rules_on
+        + "This is the single most important surface on the card: it must not be cramped, and "
         "nothing else may crowd it"
     )
     # The reference site produces a narrow right-hand rules panel on about 2 of every 10 cards
@@ -1375,10 +1488,11 @@ def creative_full(
     # cards that came back with unreadable type when the layout was forced.
     if sum(len(paragraph) for paragraph in abilities) <= FLOAT_MAX_CHARS:
         surfaces.append(
-            band + ". This card's text is short, so that strip may instead be a TALL NARROW "
-            "panel down the left or the right, about a third of the card's width, with the "
+            band + ". This card's text is short, so that object may instead be a TALL NARROW "
+            "scroll down the left or the right, about a third of the card's width, with the "
             "artwork filling the space beside it — whichever of the two suits the composition. "
-            "Either way it is one panel, pale, with straight level top and bottom edges"
+            "Either way it is one pale object, its long edges roughly level so "
+            + ("the lettering can run" if lettered else "printed lines can run")
         )
     else:
         surfaces.append(band)
@@ -1412,7 +1526,8 @@ def creative_full(
         # ban, and bd mtg-z12's finding is that naming a thing summons it, so this says what the
         # face IS rather than adding a fourth mention of what it must not carry.
         surfaces.append(
-            "a small raised tab overlapping the bottom-right corner of the lowest strip. Its "
+            "a small raised tab overlapping the bottom-right corner of the lowest "
+            "object. Its "
             "shape comes from what this scene is made of, not from a template — a broken slab "
             "where the scene is stone, a river pebble by water, a torn tag or a hanging seal "
             "where there is cloth, a beaten plate among metal, a knot of wood in a forest, a "
@@ -1501,7 +1616,7 @@ def creative_full(
             "and the raised surfaces lie ON it.",
             "So no surface reaches the left or right edge of the card. Every one of them stops "
             "short at both ends, with painted scene continuing past it on both sides — for the "
-            "plate at the top as much as for the strips below it. A surface that runs the full "
+            "for the name object at the top as much as for the objects below it. A surface that runs the full "
             "width of the card makes a band across it, and a band across the card is the exact "
             "thing this must not have.",
             "",
@@ -1546,30 +1661,22 @@ def creative_full(
             # on snow: the same value as the parchment and just as smooth, so there is no boundary
             # to measure.
             #
-            # So the shape is constrained instead of the measurement being made cleverer. The
-            # ornament that makes a surface look hand-made moves OUTSIDE the flat face rather than
-            # eating into it, which is also what the reference site's own slabs do — carved bosses
-            # and curled rods at the ends of a straight-sided panel.
-            # Lettered mode paints the words as part of the picture, so a stone arch or a scroll
-            # or a glowing orb is the product (CLIENT 2026-08-19, "text boxes to flow through").
-            # The compositor only stamps the cost; a straight-sided rectangle is leftover from
-            # printing into empty panels and is the pasted-on look he rejected.
-            *(
-                [
-                    "The flat part of each surface is a straight-sided rectangle — its left and right "
-                    "edges run straight up and down, the same way its top and bottom run straight across. "
-                    "Torn corners, curled rods, carved ends and chipped stone all sit OUTSIDE that "
-                    "rectangle, added around it. A surface that narrows as it goes down loses the text "
-                    "printed on it.",
-                ]
-                if not lettered
-                else [
-                    "Each surface is an OBJECT in this scene, not a rectangle laid on the painting — "
-                    "a stone arch, a hanging scroll, a curl of bark, a torn ribbon, a glowing orb. "
-                    "Its long top and bottom edges stay roughly level so the lettering can run, but "
-                    "the outline is made of the scene, not cropped.",
-                ]
-            ),
+            # So the printable FACE is constrained instead of the outline being a rectangle. The
+            # ornament that makes a surface look hand-made sits on and around that face rather than
+            # eating into it. Leading with "straight-sided rectangle" is what made composited cards
+            # read as cheap stamps (CLIENT 2026-08-19). Headline nouns are objects; the face stays
+            # level and wide enough for a line of type.
+            "Each surface is an OBJECT in this scene, not a rectangle laid on the painting — "
+            "a stone arch, a hanging scroll, a curl of bark, a torn ribbon"
+            + (", a glowing orb" if lettered else "")
+            + ". Its FLAT FACE — the part "
+            + ("the lettering sits in" if lettered else "we print on")
+            + " — is a LEVEL STRAIGHT band seen square-on, wide enough for a line of type. An arch "
+            "or a curve is the carved silhouette AROUND that band, not the band itself. A face that "
+            "curves, arches or tilts leaves the printed letters sitting off the stone. A surface "
+            "that narrows as it goes down loses the text "
+            + ("set on it" if lettered else "printed on it")
+            + ". Vines, torn corners and carved ends sit on and around that face, not through it.",
             # Straight-sided constrains the OUTLINE, and neither of the two faults below is an
             # outline. Both were measured on the first batch generated under it (bd mtg-cig).
             #
@@ -1664,56 +1771,28 @@ def creative_full(
         # right-hand float on others — but the vertical ORDER never changes on any of the ten.
         # Ours listed the surfaces without ever saying that order was a requirement, and two
         # consecutive generations put the name plate down in the lower third.
-        "Their order down the card is fixed and is not a suggestion: the top plate is the "
+        "Their order down the card is fixed and is not a suggestion: the "
+        "name object is the "
         "TOPMOST thing on the card and "
-        # In borderless mode the scene itself runs above and behind the plate, so "touches the
-        # upper edge" would fight the full bleed — and the ink-sketch cards the client sent all
-        # float their banner just inside the top with art visible above it.
         + ("sits inside its top tenth" if borderless else "touches its upper edge")
-        + "; the narrow strip is below the picture; the broad pale strip is below the narrow "
-        "strip"
-        # MEASURED 2026-08-17 over all 75 stored faces (bd mtg-m8q): Sol Ring came back with an
-        # empty metal shield at bottom-right on 2 of 2 Creative Full runs, and both graded clean.
-        # It is an artifact, so nothing is printed into it and it ships blank — card 03 of the
-        # 2026-08-16 sign-off pack.
-        #
-        # This sentence is why. It named a FOURTH surface immediately after "Paint exactly these 3
-        # raised surfaces and no others", and it named it "shield" — the one word the P/T clause
-        # 200 lines above spends twenty lines removing, because naming a shape pins it (bd
-        # mtg-z12, and the reference gallery is 11% shields against our 100%). "If there is one"
-        # was doing no work: the model has no way to know whether there is one, and the clause
-        # that would have told it is the clause we skipped.
-        #
-        # So it is now said only on the cards that have one, in the same words the P/T clause uses.
-        # The gate in `check.inspect` stays as the backstop — this is the cause, not a guarantee.
+        + "; the type object is below the picture; the pale rules object is below the type object"
         + ("; the tab is at the bottom right" if _has_tab(face, lettered) else "")
-        + ". No surface may be painted above the top plate.",
-        # CLIENT 2026-08-13, circling the second dark strip under Raphael's type line: "on one of
-        # them it has 2 creature type text boxes, here it looks kind of natural but i have seen
-        # these as errors many times". That card came back with two narrow strips; we printed the
-        # type line into the upper one and the lower one stayed blank, which is exactly what a
-        # second painted-but-empty surface looks like to a customer. The count was already stated
-        # twice and still lost, so an extra surface is now also DETECTED and repainted
-        # (`generation.panels`, `generation.check`) rather than only asked against.
+        + ". No surface may be painted above the name object.",
         f"That is {total} and only {total}. Do not add one more, do not repeat one, and do not "
-        "split a surface into a row of smaller ones — the one broad pale strip is the only place "
-        "the rules text goes. In particular there is exactly ONE narrow strip above it: a second "
-        "narrow strip, bar or ledge anywhere near it is a failed image. Everything between the "
+        "split a surface into a row of smaller ones — the one pale rules object is the only place "
+        "the rules text goes. In particular there is exactly ONE type object above it: a second "
+        "type object, bar or ledge anywhere near it is a failed image. Everything between the "
         "picture and these surfaces is "
         + ("scene" if borderless else "scene or edge material")
         + " — never another plate, tablet, ingot, cartouche or panel.",
         "",
-        # MEASURED 2026-08-10 against the reference site's own Terror of the Peaks. The earlier
-        # reading of this evidence — "their text surfaces are PALE" — was taken from the rules
-        # slab alone and applied to all three, which flattened the card: cream plate, cream
-        # strip, cream slab, black text on every one, no hierarchy anywhere. Across their
-        # gallery the two display surfaces are DARK with warm gold lettering and only the rules
-        # slab is light. compositor.panel_palette already picks gold-on-dark or ink-on-light
-        # from the pixels, so the value split costs nothing on our side and is pure gain.
         "VALUE, and getting this wrong is what makes a card read as a mock-up:",
-        "The top plate and the narrow strip are DARK — near-black obsidian, blackened iron, "
+        "The name object and the type object are DARK — near-black obsidian, blackened iron, "
         "deep oxblood, weathered bronze — because warm gold lettering "
-        + ("goes on them." if lettered else "is printed on them afterwards."),
+        + ("goes on them." if lettered
+           else "goes on the name object; the type line is printed on the type object afterwards."
+           if name_lettered
+           else "is printed on them afterwards."),
         # CLIENT 2026-08-16: "some P/T are large some small and small pure black dull ugly".
         #
         # This paragraph governed three surfaces and left the tab — the fourth display surface —
@@ -1733,7 +1812,8 @@ def creative_full(
         # been told to paint it. See the order clause above for the measurement.
         *(
             [
-                "The tab at the bottom right is DARK too, the same family as the top plate — dark "
+                "The tab at the bottom right is DARK too, the same family as the "
+                "name object — dark "
                 "stone, blackened metal, dark wood, dark horn — because warm gold numerals "
                 + ("go on it." if lettered else "are printed on it afterwards.")
                 + " A pale tab makes those numerals flat black on pale rock, which is the one "
@@ -1749,8 +1829,8 @@ def creative_full(
         # the printed text to 3.6:1 and 4.5:1 — unreadable at arm's length, and graded sound by
         # every structural check we had. `check.contrast` now enforces the floor; this stops the
         # brief asking for the thing that breaks it.
-        "The broad strip is LIGHT AND PALE — warm cream parchment, bleached bone, aged ivory, "
-        "weathered chalk. Near-black lettering "
+        "The pale rules object is LIGHT AND PALE — warm cream parchment, bleached bone, aged "
+        "ivory, weathered chalk. Near-black lettering "
         + ("goes on it" if lettered else "is printed on it afterwards")
         + ", so it has to be pale enough to read that text: think the palest thing in the picture, not a mid-tone. Even on "
         "a night scene or a lava scene it stays pale — a lava card gets a bone-coloured slab lit "
@@ -1770,30 +1850,34 @@ def creative_full(
         "chipped or torn ends, a notched corner, a curled rod at each end of a scroll, a rim "
         "that thickens and thins. But the long upper and lower edges of each surface stay "
         "roughly straight and level, because straight lines of text are printed across them.",
-        # NOT A NEW RULE. `_overlap` already says "each crossing stays at that surface's OUTER EDGE
-        # or over one of its corners: the broad flat middle of every surface stays completely clear
-        # and unbroken". This restates the second half of that as a flat prohibition, where the
-        # surfaces are described, because inside the overlap block it is the qualifier on an
-        # instruction to ADD crossings and it measurably loses to it.
-        #
-        # MEASURED 2026-08-17. On none of the eighteen stored reference-site cards does anything from
-        # the scene cross the face of a text panel — vines, branches, rigging and cabling wrap the
-        # outside of the rim and stop. Ours paints them over the parchment on 2 of 3: 9.1% of
-        # Craterhoof's face, 18.6% of Terror's, and the words then land on top of a branch. That is
-        # the loudest "text pasted on afterwards" signal on the card, and it is the fault
-        # `check.obstructed` now refuses, so the brief has to ask for it rather than leave the gate to
-        # discover it and spend a credit repainting.
-        #
-        # Aimed at the FACE and not the silhouette: a carved, notched, torn outline is what keeps the
-        # panel part of the world, and the clause above is not being walked back. "border" is banned
-        # from this brief — bd mtg-z12, naming the object summons it — so this is written against the
-        # rim and the ends, and `test_prompts` caught the first draft for using it.
-        "So, to be exact about where a crossing may go: the FLAT FACE of each raised surface is "
-        "completely bare. Vines, branches, roots, chains, ropes, rigging, cabling, spatter and "
-        "drifting debris wrap its rim, hook over its carved ends, tuck in behind it or stop dead at "
-        "its edge — and not one of them travels across the clear middle. Nothing whatever is painted "
-        "on the area where the text goes: that is the surface's own material and light and nothing "
-        "else.",
+        # CLIENT 2026-08-19 night, COMPOSITED-OBJECT crops: asking for a crossing THROUGH the
+        # face produced unreadable rules (vines over "Proliferate"), SORCERY sitting on a dragon,
+        # and a name stamped straight across a curved arch. Organic furniture stays. The TEXT BAND
+        # — the even middle the compositor prints into, always axis-aligned — stays clear. A vine
+        # may hook a rim or a corner; it may not run through the words.
+        (
+            "So, to be exact about where a crossing may go: a thin vine, root, chain or coil may "
+            "cross IN FRONT OF THE LETTERING on a raised surface, passing over the words and "
+            "continuing out the other side, the way a snake crosses a scroll. A mass that buries "
+            "the words is too much; a thin crossing through the face is the point."
+            if lettered
+            else
+            "So, to be exact about where a crossing may go: vines, roots, chains and the subject "
+            "wrap the RIM or a CORNER of each raised surface — a rod, a carved end, one sixth of "
+            "one end. The name's letters stay readable — a vine may wrap the name object's rim, "
+            "not run through the glyphs. The TEXT BAND of the type object and the pale rules "
+            "object — the even, level middle of those faces, where the type is printed afterwards "
+            "— stays completely clear. A vine, a dragon, a snout or a chain through those words "
+            "makes the card unusable. The type object especially: nothing of the subject sits on it."
+            if name_lettered
+            else
+            "So, to be exact about where a crossing may go: vines, roots, chains and the subject "
+            "wrap the RIM or a CORNER of each raised surface — a rod, a carved end, one sixth of "
+            "one end. The TEXT BAND — the even, level middle of every face, where the type is "
+            "printed afterwards — stays completely clear. A vine, a dragon, a snout or a chain "
+            "through the words makes the card unusable. The type object especially: nothing of "
+            "the subject sits on it."
+        ),
         "",
         # MEASURED 2026-08-10, first three generations: the slab came back eating ~40% of the card
         # on all three and the narrow strip was omitted on all three. The art has to be told it
@@ -1855,7 +1939,7 @@ def creative_full(
         # separately because it is new and because carved runes along a border are exactly the
         # decoration a model reaches for — Twinflame Tyrant on their own site has painted fake
         # runes sitting beside its real composited rules text.
-        _writing_ban(borderless, lettered),
+        _writing_ban(borderless, lettered, name_lettered),
         # CLIENT 2026-08-13, circling the swirl beside the reference site's own type line: "these
         # are set symbols, to know which set the cards from, but these are proxies that dont have
         # a set so its just a random symbol and actually sometimes ive seen it put a real symbol
@@ -1930,12 +2014,18 @@ def creative_full(
     if borderless:
         if lettered:
             well = (
-                " The RIGHT-HAND END of the top plate is the exception and stays BARE — that "
-                "reserved well is where the mana cost is stamped afterwards, and a crossing there "
-                "lands on the symbols. The name on the left of that plate MAY be crossed."
+                " The RIGHT-HAND END of the top plate is the exception: same material as the rest "
+                "of that object, no second box, no pale cutout — that reserved well is where the "
+                "mana cost is stamped afterwards, and a crossing there lands on the symbols. The "
+                "name on the left of that plate MAY be crossed."
                 if symbols.TOKEN.findall(face.get("mana_cost") or "")
                 else " The name on the top plate MAY be crossed."
             )
+            # MEASURED 2026-08-19, LETTERED-OVERLAP seven vs 5 (1).png: vines and chains landed
+            # on the furniture (Tree of Tales, Triumph, Three Visits). The furniture itself was
+            # still three stacked rectangles — dark bar, dark bar, cream slab — which is the
+            # fail the client named. The mid-brief "OBJECT in this scene" lost the same way the
+            # soft overlap sentence used to. Restate the shape HERE, with the overlap, late.
             before_the_writing_ban(
                 "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
                 "picture with labels laid on it. At least TWO of the raised surfaces have a real "
@@ -1944,10 +2034,22 @@ def creative_full(
                 "hanging chain — passing over the words and continuing out the other side. Not a "
                 "shadow, not a glow, and not a vine parked on the corner of an otherwise empty "
                 "slab: a solid thing, drawn in the same ink, sitting in front of the letters the "
-                "way a snake crosses a scroll."
+                "way a snake crosses a scroll. "
+                "The surfaces themselves are OBJECTS grown from this scene — a stone arch or carved "
+                "lintel holding the name, a hanging scroll or torn ribbon holding the rules, a curl "
+                "of bark, a glowing orb. The name sits IN the object. Three painted rectangles "
+                "stacked on a picture, even with vines on their corners, is still a picture with "
+                "labels laid on it."
                 + well
             )
-        else:
+        elif name_lettered:
+            well = (
+                " The RIGHT-HAND END of the top plate is the exception: same material as the rest "
+                "of that object, no second box, no pale cutout — that reserved well is where the "
+                "mana cost is stamped afterwards, and a crossing there lands on the symbols."
+                if symbols.TOKEN.findall(face.get("mana_cost") or "")
+                else ""
+            )
             before_the_writing_ban(
                 "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
                 "picture with labels laid on it. At least TWO of the raised surfaces have a real "
@@ -1955,28 +2057,40 @@ def creative_full(
                 "limb, a wingtip, a tail, a curl of smoke, a lick of flame, a hanging chain. Not a "
                 "shadow and not a glow: a solid thing, drawn in the same ink and lit by the same light "
                 "as the rest of the picture, passing over the surface and continuing out the other "
-                # The hard boundary. `cards.compositor` prints into each surface's interior, so an
-                # element crossing the middle of the pale strip lands under our own rules text and
-                # `check.contrast` fails the card into a repaint — trading the client's complaint for
-                # a legibility one. Overlapping the rim is free; overlapping the face costs a credit.
-                # Stated as geometry rather than as a ban, because bd mtg-z12's finding is that naming
-                # a thing summons it.
+                "side. Each crossing stays at that surface's OUTER EDGE or over one of its corners. "
+                "The name sits IN the top object — the letters are part of that object, not a stamp "
+                "on a bar — and they stay readable: a vine may wrap the rim, not run through the "
+                "glyphs. The type object and the pale rules object stay empty, their TEXT BAND "
+                "completely clear, because that is where the card's type is printed. The type object "
+                "especially: nothing of the subject sits on it — not a dragon, not a snout, not a coil. "
+                "The surfaces themselves are OBJECTS grown from this scene — a stone arch or carved "
+                "lintel holding the name, a hanging scroll or torn ribbon for the rules, a curl of "
+                "bark. Three painted rectangles stacked on a picture, even with vines on their corners, "
+                "is still a picture with labels laid on it."
+                + well
+            )
+        else:
+            # CLIENT 2026-08-19 night: "passing over the middle" shipped unreadable rules and
+            # SORCERY on a dragon. Organic objects stay. Crossings stay at the rim. The TEXT BAND
+            # the compositor prints into stays clear — we stamp axis-aligned type and cannot follow
+            # a curve or sit behind a snout.
+            before_the_writing_ban(
+                "AND: THE OVERLAP, which is what makes the card read as ONE piece of art instead of a "
+                "picture with labels laid on it. At least TWO of the raised surfaces have a real "
+                "element of the scene crossing in FRONT of them — a vine, a creeping root, a claw, a "
+                "limb, a wingtip, a tail, a curl of smoke, a lick of flame, a hanging chain. Not a "
+                "shadow and not a glow: a solid thing, drawn in the same ink and lit by the same light "
+                "as the rest of the picture, passing over the surface and continuing out the other "
                 "side. Each crossing stays at that surface's OUTER EDGE or over one of its corners: "
-                "the broad flat middle of every surface stays completely clear and unbroken, because "
-                "that is where the card's text is printed. "
-                # MEASURED 2026-08-16, first batch under this clause: Craterhoof's vine crossed a
-                # quarter of the way along the top plate. `panels.detect` is asked to keep what
-                # crosses in front OUT of the box, did so correctly, and the box that came back
-                # started at x=0.27 — so the name was laid out from there and sat visibly off-centre
-                # on a plate that runs nearly the full width. The clause worked and the card looked
-                # wrong, which is the cheapest kind of bug to catch and the easiest to leave in.
-                #
-                # The top plate is the one surface where this costs something, because it is the only
-                # one whose text is left-aligned rather than centred, and it is the sliver a fanned
-                # hand shows. So its crossing is pushed out to the very end.
-                "On the plate across the top, keep any crossing within a sixth of one end or the "
-                "other. The long middle of that plate carries the card's name and must be clear "
-                "right across it."
+                "the TEXT BAND — the even, level middle of every face — stays completely clear, "
+                "because that is where the card's text is printed. The type object especially: "
+                "nothing of the subject sits on it — not a dragon, not a snout, not a coil. "
+                "The surfaces themselves are OBJECTS grown from this scene — a stone arch or carved "
+                "lintel across the top, a hanging scroll or torn ribbon for the rules, a curl of "
+                "bark. Leave them empty — the lettering is printed on them afterwards. "
+                "Three painted rectangles stacked on a picture, even with vines on their corners, "
+                "is still a picture with labels laid on it. An arch whose FACE itself curves is "
+                "the same fault: the letters are printed in a straight line and will sit off the stone."
             )
 
     # INSERTED BEFORE THE TOP-PLATE CLAUSE, and the order is load-bearing. These insert in call
@@ -2005,7 +2119,19 @@ def creative_full(
     # `test_surfaces_are_described_as_shapes_not_as_fields` is what holds that line. The first
     # draft of this very clause broke it.
     before_the_writing_ban(
-        "AND: THE TOP PLATE SITS AT THE TOP OF THE CARD. Its upper edge "
+        "AND: THE TOP PLATE SITS AT THE TOP OF THE CARD. "
+        "It is a stone arch, carved lintel or hanging banner — "
+        + (
+            "the name sits IN it, not on a painted bar. "
+            if lettered
+            else "the name sits IN it, not on a painted bar. The letters may follow that "
+                 "object's silhouette. Leave the type object and the pale rules object empty. "
+            if name_lettered
+            else "leave it empty, the name is printed on it afterwards, not on a painted bar. "
+                 "Its printable face is a LEVEL STRAIGHT band — an arch is the silhouette around "
+                 "that band, not a curve the letters follow. "
+        )
+        + "Its upper edge "
         + ("is inside the top tenth of the image, with the picture running behind it"
            if borderless else "touches the upper edge of the card")
         + ". Filling the upper half of the card with picture and then stacking all three "

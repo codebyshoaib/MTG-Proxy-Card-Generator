@@ -89,10 +89,11 @@ class GenerateTests(TestCase):
             "include_flavor_text": True,
             "use_original_art_reference": False,
             "borderless": True,
-            # OURS, not theirs, and never accepted from the body. Art Only paints no words, so
-            # this stays off; Creative Full forces it on (see the test below). Recorded either
-            # way: `job.options` is the only record of what produced a stored card.
-            "lettered": False,
+            # OURS, not theirs, and never accepted from the body. Creative Full is lettered:
+            # the model paints every field except the mana cost. Recorded either way:
+            # `job.options` is the only record of what produced a stored card.
+            "lettered": True,
+            "name_lettered": False,
         })
 
     def test_custom_style_free_text_folds_into_the_style_field(self):
@@ -110,15 +111,17 @@ class GenerateTests(TestCase):
         self.assertIs(Job.objects.get(pk=response.json()["id"]).options["borderless"], False)
 
     def test_creative_full_is_lettered_and_the_body_cannot_turn_it_off(self):
-        """Snake bar, 2026-08-19. Creative Full is the lettered path: the model paints the words
-        so the scene can cross them, which compositing cannot do. Not a payload field — their
-        API has no such switch, and a customer toggle would let a card whose text we did not
-        author ship without the read-back gate."""
+        """CLIENT 2026-08-19 favorites: names in objects, furniture in the scene. The model
+        letters the card; we stamp mana. Not a payload field — their API has no such switch."""
         response, _, _ = self._post({"decklist": "x"})
-        self.assertIs(Job.objects.get(pk=response.json()["id"]).options["lettered"], True)
+        job = Job.objects.get(pk=response.json()["id"])
+        self.assertIs(job.options["lettered"], True)
+        self.assertIs(job.options["name_lettered"], False)
         Job.objects.all().delete()
-        response, _, _ = self._post({"decklist": "x", "lettered": False})
-        self.assertIs(Job.objects.get(pk=response.json()["id"]).options["lettered"], True)
+        response, _, _ = self._post({"decklist": "x", "lettered": False, "name_lettered": True})
+        job = Job.objects.get(pk=response.json()["id"])
+        self.assertIs(job.options["lettered"], True)
+        self.assertIs(job.options["name_lettered"], False)
 
     def test_an_unknown_mode_is_refused(self):
         response, resolve, _ = self._post({"decklist": "x", "frame_version": "FRAME_v1"})

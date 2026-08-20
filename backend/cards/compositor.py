@@ -693,7 +693,7 @@ def crossing_mask(surface):
     return grey.point(lambda v: 0 if v <= low else min(255, round(255 * (v - low) / span)))
 
 
-def _stamp(image, layer, box, size, colour, direction=(1, 1)):
+def _stamp(image, layer, box, size, colour, direction=(1, 1), *, occlude=True):
     """Composite a finished text layer onto the card, its own cast shadow first.
 
     The shadow is the layer's own alpha, tinted, blurred and offset away from the scene's light,
@@ -715,10 +715,12 @@ def _stamp(image, layer, box, size, colour, direction=(1, 1)):
         (box[0] + offset * direction[0], box[1] + offset * direction[1]),
     )
     image.alpha_composite(layer, (box[0], box[1]))
-    # EVERY surface, not just the pale rules panel. The client's "the rope behind sol ring shall
-    # feel like its submerged" is the title plate, and the type plate and P/T tab have the same
-    # crossings for the same reason — the brief asks for them.
-    _occlude(image, surface, layer, box)
+    # Title and rules: a thin rim crossing goes back in front of the stamp. Type never — COMPOSITED-
+    # OBJECT Triumph put the dragon back over "SORCERY", which is unreadable and looks like the type
+    # line was printed on the creature. The brief keeps the subject off that object; this stops the
+    # compositor from hiding the word if the model still paints over it.
+    if occlude:
+        _occlude(image, surface, layer, box)
 
 
 def _occlude(image, surface, layer, box):
@@ -848,7 +850,7 @@ def _tab_box(box):
     return (x0, y0, x0 + round(height * TAB_MAX_ASPECT), y1)
 
 
-def compose(png, face, panels, include_flavor_text=False, lettered=False):
+def compose(png, face, panels, include_flavor_text=False, lettered=False, name_lettered=False):
     """(finished card, whether the rules text overflowed its panel).
 
     A panel the detector did not find is skipped rather than guessed at — a card missing its type
@@ -859,6 +861,9 @@ def compose(png, face, panels, include_flavor_text=False, lettered=False):
     `lettered` means the model already set every field except the cost, so this stamps the cost and
     nothing else. Overflow is always False there: the model sized the panel to text it could see,
     which is the whole reason that mode exists (bd mtg-469).
+
+    `name_lettered` is the failed hybrid: the model painted the name INTO the top object, and we
+    stamp cost, type, rules and P/T. `lettered` wins if both are set.
     """
     image = Image.open(png).convert("RGBA") if not isinstance(png, Image.Image) else png.copy()
     light = light_direction(image)
@@ -897,23 +902,24 @@ def compose(png, face, panels, include_flavor_text=False, lettered=False):
         """
         return printable_face(image, _box(panel, image.size))
 
-    if lettered:
-        if panels.get("title"):
-            # THE RAW BOX, not `plate_box`. MEASURED on Progenitus, 2026-08-17: `plate_extent`
-            # grew a title box reported at y 0.05-0.15 all the way to y 0.00, and the pips centred
-            # in that box rode half off the top of the plate. Both repairs are tuned for a BLANK
-            # surface — they find a plate's painted extent by scanning for the value edge where it
-            # meets the art, and on a lettered card the name's own strokes are value edges, so the
-            # scan walks past the rim and into the picture.
-            #
-            # The NAME box is the letters. Passing it is what stops the pips sitting in the
-            # title box's empty sky (live pack 2026-08-19). `_cost` then tightens it to the
-            # painted ink, because the box itself still carries detector padding.
-            name = _box(panels["name"], image.size) if panels.get("name") else None
-            _cost(image, face, _box(panels["title"], image.size), light, name)
-        return image, False
+    paints_name = lettered or name_lettered
+    if paints_name and panels.get("title"):
+        # THE RAW BOX, not `plate_box`. MEASURED on Progenitus, 2026-08-17: `plate_extent`
+        # grew a title box reported at y 0.05-0.15 all the way to y 0.00, and the pips centred
+        # in that box rode half off the top of the plate. Both repairs are tuned for a BLANK
+        # surface — they find a plate's painted extent by scanning for the value edge where it
+        # meets the art, and on a lettered card the name's own strokes are value edges, so the
+        # scan walks past the rim and into the picture.
+        #
+        # The NAME box is the letters. Passing it is what stops the pips sitting in the
+        # title box's empty sky (live pack 2026-08-19). `_cost` then tightens it to the
+        # painted ink, because the box itself still carries detector padding.
+        name = _box(panels["name"], image.size) if panels.get("name") else None
+        _cost(image, face, _box(panels["title"], image.size), light, name)
+        if lettered:
+            return image, False
 
-    if panels.get("title"):
+    if not paints_name and panels.get("title"):
         _title(image, face, plate_box(panels["title"]), light)
     if panels.get("type"):
         type_box = plate_box(panels["type"])
@@ -1258,7 +1264,104 @@ def _extend_plate_right(image, box, name=None):
     return x0, y0, last, y1
 
 
-def _cost_well(image, box, name=None):
+def _name_plate_ref(image, name, title):
+    """Luma of the plate the name sits ON, not of the letters and not of a hole after them.
+
+    Taken from the title band's INTERIOR at the name's rows — the same 15–55%
+    `_extend_plate_right` uses — so a carved black bevel (Atraxa) and a pale
+    painted slot (Tromell) cannot become the plate luma. The name crop itself is
+    gold lettering; its quartile is the ink.
+    """
+    x0, y0, x1, y1 = title
+    by0 = max(y0, min(round(name[1]), y1 - 2))
+    by1 = max(by0 + 1, min(round(name[3]), y1))
+    inner0 = x0 + int((x1 - x0) * 0.15)
+    inner1 = x0 + int((x1 - x0) * 0.55)
+    if inner1 <= inner0 + 8:
+        inner0, inner1 = x0, x1
+    band = image.crop((inner0, by0, inner1, by1)).convert("L")
+    vals = sorted(band.getdata())
+    if not vals:
+        return 0.0
+    # The TITLE box can include a pale painted slot, which fools `surface_is_dark`.
+    # The interior quartile itself says whether this plate is stone or bone.
+    if vals[len(vals) // 4] < 128:
+        return vals[len(vals) // 4]
+    return vals[(3 * len(vals)) // 4]
+
+
+def _well_ref(image, name, title, wx0):
+    """Plate luma for the cost walk.
+
+    Under-the-name stone (Atraxa's letters sit on a darker band than the empty
+    face) is the identity of the object. The empty face just after the letters
+    is what we walk, when it is the same material — a gradient of 20 luma is
+    still the plate. A pale painted slot is 100+ luma away and is not.
+    """
+    under = _name_plate_ref(image, name, title)
+    x1 = round(title[2])
+    by0 = max(round(title[1]), min(round(name[1]), round(title[3]) - 2))
+    by1 = max(by0 + 1, min(round(name[3]), round(title[3])))
+    nx1 = min(x1, wx0 + 32)
+    if nx1 <= wx0 + 4:
+        return under
+    vals = sorted(image.crop((wx0, by0, nx1, by1)).convert("L").getdata())
+    if not vals:
+        return under
+    after = vals[len(vals) // 2]
+    if abs(after - under) <= max(28.0, under * 0.55):
+        return after
+    return under
+
+
+def _walk_plate_right(image, x0, y0, x1, y1, ref, slack):
+    """Rightmost column in [x0, x1) that is still the plate `ref` describes.
+
+    Crosses a short same-family seam (Kitchen Finks). Stops on a painted slot,
+    sky, or a structured rim (Birthing Pod gold).
+    """
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return x1
+    grey = image.convert("L")
+    px = grey.load()
+    pad_y = max(1, (y1 - y0) // 4)
+    ym0, ym1 = y0 + pad_y, y1 - pad_y
+    if ym1 <= ym0:
+        ym0, ym1 = y0, y1
+
+    def col_mean(x):
+        vals = [px[x, y] for y in range(ym0, ym1)]
+        return sum(vals) / len(vals)
+
+    def col_sd(x):
+        vals = [px[x, y] for y in range(ym0, ym1)]
+        mean = sum(vals) / len(vals)
+        return (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+
+    last = x0
+    miss = 0
+    structured = 0
+    for x in range(x0, x1):
+        if col_sd(x) > 10.0:
+            structured += 1
+            # Grain on the left of a stone plate is not a rim (Craterhoof, Atraxa).
+            # A structured spike after the face is established is (gold lip, gothic frame).
+            established = (last - x0) >= int(max(1, x1 - x0) * FACE_RIGHT_MIN_SPAN)
+            if established and structured >= 6:
+                break
+        else:
+            structured = 0
+        if abs(col_mean(x) - ref) <= slack:
+            last = x + 1
+            miss = 0
+        else:
+            miss += 1
+            if miss > PLATE_SEAM:
+                break
+    return max(x0 + 1, last)
+
+
+def _cost_well(image, box, name=None, plate=None):
     """The inner rectangle that should hold the pips.
 
     SIGNOFF 2026-08-19: the well used to start at 72% of the title box. That boxed
@@ -1266,27 +1369,39 @@ def _cost_well(image, box, name=None):
     three into the left half of a split plate (overflow, empty box on the right).
     The well starts after the painted name and runs to the inner face of the plate —
     including a cost box `read_back` dropped, via `_extend_plate_right`.
+
+    LETTERED-OVERLAP v4 (bd mtg-2su): luma is taken from the name object, not from
+    the pixels after the name. Those pixels are where Gemini paints a second box.
+    The title detector box is a search cap, not the well.
     """
     x0, y0, x1, y1 = box
     gap = round(image.width * COST_NAME_GAP)
+    grey = image.convert("L")
+    px = grey.load()
     if name:
         wx0 = min(max(round(name[2]) + gap, x0), x1 - 8)
         seed0 = max(y0, min(round(name[1]), y1 - 2))
         seed1 = max(seed0 + 1, min(round(name[3]), y1))
+        ref = _well_ref(image, plate or name, box, wx0)
+        rx0, rx1 = round(name[0]), round(name[2])
+        sample0 = max(rx0, rx1 - max(24, (rx1 - rx0) // 3))
+        sample1 = max(sample0 + 1, rx1)
+
+        def row_mean(y):
+            vals = [px[x, y] for x in range(sample0, sample1)]
+            return sum(vals) / len(vals)
     else:
         wx0 = x0 + int((x1 - x0) * 0.50)
         mid = (y0 + y1) // 2
         seed0, seed1 = max(y0, mid - 8), min(y1, mid + 8)
-    strip = image.crop((wx0, y0, x1, y1)).convert("L")
-    sw, _ = strip.size
-    px = strip.load()
-    xm0, xm1 = max(1, sw // 4), max(sw // 4 + 1, sw - sw // 4)
+        xm0 = max(wx0 + 1, wx0 + (x1 - wx0) // 4)
+        xm1 = max(xm0 + 1, x1 - (x1 - wx0) // 4)
 
-    def row_mean(y):
-        vals = [px[x, y - y0] for x in range(xm0, xm1)]
-        return sum(vals) / len(vals)
+        def row_mean(y):
+            vals = [px[x, y] for x in range(xm0, xm1)]
+            return sum(vals) / len(vals)
 
-    ref = sum(row_mean(y) for y in range(seed0, seed1)) / (seed1 - seed0)
+        ref = sum(row_mean(y) for y in range(seed0, seed1)) / (seed1 - seed0)
     slack = max(22.0, ref * 0.40)
 
     def same(y):
@@ -1299,7 +1414,25 @@ def _cost_well(image, box, name=None):
     while bot < y1 and same(bot):
         bot += 1
     peel_x0 = max(wx0, x1 - max(round((x1 - x0) * 0.35), round(image.width * 0.22)))
-    right = _plate_face_right(image, (peel_x0, top, x1, bot))
+    face_right = _plate_face_right(image, (peel_x0, top, x1, bot))
+    # Default: pips at the inner-right of the title frame. That is the
+    # placement the client flags daily when it misses. Only abandon it when
+    # that right-hand end is a DIFFERENT painted box (Tromell's pale slot).
+    pad_y = max(1, (bot - top) // 4)
+    ym0, ym1 = top + pad_y, bot - pad_y
+    if ym1 <= ym0:
+        ym0, ym1 = top, bot
+    probe = min(max(wx0, face_right - 16), max(wx0, face_right - 1))
+
+    def col_mean(x):
+        vals = [px[x, y] for y in range(ym0, ym1)]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    tail = col_mean(probe)
+    if abs(tail - ref) <= slack:
+        return wx0, top, face_right, bot
+    walked = _walk_plate_right(image, wx0, top, x1, bot, ref, slack)
+    right = _plate_face_right(image, (wx0, top, walked, bot))
     return wx0, top, right, bot
 
 
@@ -1313,10 +1446,11 @@ def cost_fits(image, face, box, name=None):
     tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
     if not tokens:
         return True
+    plate = name
     if name:
         name = _letter_band(image, name)
     box = _extend_plate_right(image, box, name)
-    wx0, wy0, wx1, wy1 = _cost_well(image, box, name)
+    wx0, wy0, wx1, wy1 = _cost_well(image, box, name, plate)
     n = len(tokens)
     target = max(1, round(_pip_frac((0, 0, 1, (wy1 - wy0) / image.height)) * image.height))
     floor = max(16, round(target * PIP_MIN_OF_TARGET))
@@ -1352,10 +1486,11 @@ def _cost(image, face, box, light=(1, 1), name=None):
     tokens = list(reversed(symbols.TOKEN.findall(face.get("mana_cost") or "")))
     if not tokens:
         return
+    plate = name
     if name:
         name = _letter_band(image, name)
     box = _extend_plate_right(image, box, name)
-    wx0, wy0, wx1, wy1 = _cost_well(image, box, name)
+    wx0, wy0, wx1, wy1 = _cost_well(image, box, name, plate)
     target = max(1, round(_pip_frac((0, 0, 1, (wy1 - wy0) / image.height)) * image.height))
     pip_px = target
     n = len(tokens)
@@ -1372,6 +1507,11 @@ def _cost(image, face, box, light=(1, 1), name=None):
     # size — below that they read as dots (Progenitus, sign-off pack).
     while pip_px > floor and span(pip_px) + pad(pip_px) > well_w:
         pip_px -= 1
+    # LETTERED-OVERLAP v3, Triumph of the Hordes: the floor still did not fit,
+    # and stamping anyway stacked {2}{G}{G} into one oval. `cost_off_rim` already
+    # fails the attempt; an empty well on a retry image is better than a smash.
+    if span(pip_px) + pad(pip_px) > well_w:
+        return
     mid = (wy0 + wy1) / 2
     top = round(mid - pip_px / 2)
     top = max(wy0, min(top, wy1 - pip_px))
@@ -1479,7 +1619,7 @@ def _display(image, text, box, light=(1, 1), *, size):
         size,
         tracking,
     )
-    _stamp(image, layer, box, size, shadow, light)
+    _stamp(image, layer, box, size, shadow, light, occlude=False)
 
 
 def _rules_panels(rules):

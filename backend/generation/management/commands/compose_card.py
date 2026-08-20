@@ -28,7 +28,7 @@ def _slug(name):
 
 
 class Command(BaseCommand):
-    help = "Generate one Creative Full card (lettered by default; --composited for the old path)."
+    help = "Generate one Creative Full card (Gemini letters the card; we stamp the mana cost). --composited stamps every field; --name-lettered letters only the name."
 
     def add_arguments(self, parser):
         parser.add_argument("card")
@@ -57,8 +57,8 @@ class Command(BaseCommand):
         parser.add_argument("--out", default=Path("card-out"), type=Path)
         parser.add_argument(
             "--from", dest="source", default=None, type=Path,
-            help="Replay onto this existing PNG instead of generating one. Lettered by default; "
-                 "pair with --composited for an empty-furniture blank.",
+            help="Replay onto this existing PNG instead of generating one. Default treats the "
+                 "source as already lettered (stamp cost only). Pass --composited for blank furniture.",
         )
         parser.add_argument(
             "--panels", dest="panel_boxes", default=None, type=Path,
@@ -71,26 +71,39 @@ class Command(BaseCommand):
             help="Also write a copy with the detected boxes outlined, to check the detector.",
         )
         parser.add_argument(
-            "--composited", dest="lettered", action="store_false",
-            help="Paint blank furniture and stamp Scryfall's text (the old path). Default is "
-                 "lettered: the model paints the words so the scene can cross them, and only "
-                 "the mana cost is stamped.",
+            "--lettered", dest="lettered", action="store_true",
+            help="Let the model paint every field except the mana cost (the default).",
         )
-        parser.set_defaults(lettered=True)
+        parser.add_argument(
+            "--name-lettered", dest="name_lettered", action="store_true",
+            help="Letter only the name; stamp type, rules, P/T and mana. The hybrid that failed "
+                 "his seven on 2026-08-20 — kept so a replay can still use it.",
+        )
+        parser.add_argument(
+            "--composited", dest="composited", action="store_true",
+            help="Paint blank furniture and stamp Scryfall's text including the name.",
+        )
+        parser.set_defaults(lettered=False, name_lettered=False, composited=False)
 
     def handle(
         self, card, style, out, source, boxes, direction, palette, notes, flavor,
-        use_reference, attempts, borderless, lettered, panel_boxes, **_,
+        use_reference, attempts, borderless, lettered, composited, name_lettered, panel_boxes, **_,
     ):
         try:
             faces = pipeline.faces_of(card)
         except pipeline.Rejected as rejected:
             raise CommandError(rejected.detail) from rejected
 
+        if composited:
+            lettered, name_lettered = False, False
+        elif name_lettered:
+            lettered, name_lettered = False, True
+        else:
+            lettered, name_lettered = True, False
         options = pipeline.Options(
             art_style=style, art_direction=direction, color_palette=palette, custom_art_notes=notes,
             include_flavor_text=flavor, use_original_art_reference=use_reference,
-            borderless=borderless, lettered=lettered,
+            borderless=borderless, lettered=lettered, name_lettered=name_lettered,
         )
         out.mkdir(parents=True, exist_ok=True)
         for face in faces:

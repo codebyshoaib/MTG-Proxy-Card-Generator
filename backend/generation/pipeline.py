@@ -39,10 +39,11 @@ class Options(NamedTuple):
     # Borderless is the default — client, 2026-08-13. False builds the card's edge out of the
     # scene instead of running the art full bleed.
     borderless: bool = True
-    # Engine default is off so compositor tests and `--from` replays stay on the stamped path.
-    # The PRODUCT default is on: Creative Full through the API and `compose_card` letters, because
-    # that is the only order in which the scene can cross the words (snake bar, 2026-08-19).
-    lettered: bool = False
+    # PRODUCT default is `lettered=True`: the model paints name, type, rules and P/T. We stamp
+    # only the mana cost (the one field that failed more than once when the model drew it).
+    # `--composited` stamps every field. `--name-lettered` is the failed hybrid (name only).
+    lettered: bool = True
+    name_lettered: bool = False
 
 
 class Result(NamedTuple):
@@ -224,6 +225,16 @@ def creative_full(face, options=Options(), attempts=2, source=None, panel_boxes=
             note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
             continue
 
+        if options.name_lettered:
+            card, detected, problems = _name_letter(
+                png, face, options, paragraphs, panel_boxes=panel_boxes,
+            )
+            if not problems or source or attempt >= max(1, attempts):
+                return Result(card, problems, detected, None if source else png)
+            corrections = [problem.detail for problem in problems]
+            note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
+            continue
+
         # `panel_boxes` and not `detected`: this is inside the retry loop, and reassigning the
         # override would hand attempt 1's boxes to attempt 2's repainted image — boxes measured on
         # a card that no longer exists, printed onto one nobody looked at.
@@ -315,6 +326,36 @@ def _letter(png, face, options):
     return card, detected, problems
 
 
+def _name_letter(png, face, options, paragraphs, panel_boxes=None):
+    """(card, boxes, problems) for the name-only hybrid: painted name, stamped everything else.
+
+    ONE vision call, same cost as composited or full lettered. `detect(..., named=True)` is
+    `detect` plus the name transcription — a card with writing on the title cannot reuse the
+    blank-furniture prompt, and calling `read_back` as well would be a third paid call.
+
+    The name is graded against Scryfall. Type, rules and P/T are ours, so writing on those
+    surfaces is `text_extra` and a repaint. Cost is still stamped into the reserved well.
+    """
+    detected = panel_boxes or panels.detect(
+        png, paragraphs=paragraphs, expect_pt=face.get("power") is not None, named=True,
+    )
+    blank = Image.open(io.BytesIO(png)).convert("RGBA")
+    card, overflowed = compositor.compose(
+        blank.copy(), face, detected,
+        include_flavor_text=options.include_flavor_text, name_lettered=True,
+    )
+    problems = check.proofread(face, detected, only=("title_plate",))
+    problems += [problem for problem in [check.cost_collides(face, detected)] if problem]
+    problems += [problem for problem in [check.cost_off_rim(blank, face, detected)] if problem]
+    problems += check.inspect(face, detected, overflowed)
+    problems += [problem for problem in [check.obstructed(blank, detected, face)] if problem]
+    problems += [problem for problem in [check.contrast(card, detected)] if problem]
+    problems += [problem for problem in [check.colour_identity(card, face)] if problem]
+    if options.borderless:
+        problems += [problem for problem in [check.matted(card)] if problem]
+    return card, detected, problems
+
+
 def _paint(face, licensed, reference, options, note, corrections=()):
     """One image call: the card's art and its blank furniture, as PNG bytes.
 
@@ -331,6 +372,7 @@ def _paint(face, licensed, reference, options, note, corrections=()):
             direction=options.art_direction, palette=options.color_palette,
             notes=options.custom_art_notes, borderless=options.borderless,
             corrections=corrections, lettered=options.lettered,
+            name_lettered=options.name_lettered,
         )
 
     if not (licensed and refusals.is_refused(face["name"])):

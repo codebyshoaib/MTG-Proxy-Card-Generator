@@ -82,10 +82,6 @@ def run(job_id):
     job.worker_pid = os.getpid()
     job.save(update_fields=["status", "worker_pid"])
     options = pipeline.Options(**job.options)
-    # Worker invariant, not a stored preference. Creative Full is the lettered path: a row
-    # created before that default, or by hand with options={}, still has to letter.
-    if job.mode != "ART_ONLY" and not options.lettered:
-        options = options._replace(lettered=True)
     directory = settings.MEDIA_ROOT / "generated" / str(job.pk)
     directory.mkdir(parents=True, exist_ok=True)
 

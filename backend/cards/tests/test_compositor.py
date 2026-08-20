@@ -697,6 +697,12 @@ class NoBlendEffectsTests(SimpleTestCase):
         self.assertEqual(source.count("_spread("), 1)
         self.assertIn("offset * direction", source)
 
+    def test_the_type_line_is_not_put_behind_the_subject(self):
+        """COMPOSITED-OBJECT Triumph: `_occlude` pasted the dragon back over SORCERY.
+        Title and rules still occlude a thin rim crossing; type does not."""
+        import inspect
+        self.assertIn("occlude=False", inspect.getsource(compositor._display))
+
     def test_text_is_far_darker_than_the_panel_it_is_printed_on(self):
         """Legibility outranks every effect (CLAUDE.md), and it is what a future blend pass has
         to keep true."""
@@ -847,6 +853,50 @@ class LetteredCostTests(SimpleTestCase):
         # any of them it would be printing a second copy on top of the model's own.
         below = composed.crop((0, 1400, 1792, 2400)).convert("L")
         self.assertEqual(below.getextrema()[0], below.getextrema()[1], "something was drawn below")
+
+
+class NameLetteredComposeTests(SimpleTestCase):
+    """CLIENT 2026-08-19 favorites: the name is painted; we stamp cost, type, rules, P/T.
+
+    Axis-aligned EB Garamond over a painted name is the miss (Avacyn's banner, Kaalia's title).
+    """
+
+    def furniture(self):
+        image = card((40, 80, 40))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((90, 100, 1700, 300), fill=(30, 34, 38, 255))
+        draw.rectangle((90, 1390, 1700, 1540), fill=(28, 30, 34, 255))
+        draw.rectangle((100, 1560, 1680, 2160), fill=(220, 210, 190, 255))
+        draw.rectangle((1430, 2110, 1680, 2300), fill=(30, 34, 38, 255))
+        return image
+
+    def blank(self):
+        """Kept because the lettered-cost tests below were on LetteredCostTests and still
+        need a dark title plate. They run here after a class split; the assertion is the same."""
+        image = card((200, 200, 200))
+        ImageDraw.Draw(image).rectangle((90, 100, 1700, 300), fill=(30, 34, 38, 255))
+        return image
+
+    def test_the_name_is_left_alone_and_the_rest_is_stamped(self):
+        before = self.furniture()
+        ImageDraw.Draw(before).rectangle((120, 140, 400, 260), fill=(255, 0, 255, 255))
+        after = compositor.compose(before.copy(), FACE, PANELS, name_lettered=True)[0]
+        self.assertEqual(after.getpixel((200, 200))[:3], (255, 0, 255))
+        self.assertNotEqual(
+            before.crop((90, 1390, 1700, 1540)).tobytes(),
+            after.crop((90, 1390, 1700, 1540)).tobytes(),
+            "type line was not stamped",
+        )
+        self.assertNotEqual(
+            before.crop((100, 1560, 1680, 2160)).tobytes(),
+            after.crop((100, 1560, 1680, 2160)).tobytes(),
+            "rules text was not stamped",
+        )
+        self.assertNotEqual(
+            before.crop((1400, 100, 1700, 300)).tobytes(),
+            after.crop((1400, 100, 1700, 300)).tobytes(),
+            "mana cost was not stamped",
+        )
 
     def test_the_pips_land_at_the_right_hand_end_of_the_plate(self):
         """`prompts._cost_room` reserves that end in the brief off the same constants, so a pip
@@ -1152,6 +1202,52 @@ class LetteredCostTests(SimpleTestCase):
                 ),
                 f"{slug}: inner face too short for the cost — would stamp onto the rim",
             )
+
+    def test_pips_sit_on_the_name_plate_not_in_a_painted_slot(self):
+        """LETTERED-OVERLAP v3/v4. The brief reserved a bare end; Gemini painted a
+        second pale rectangle and `_cost_well` treated that slot as the well
+        because it seeded luma from the pixels AFTER the name. The client's
+        daily flag is pips off the title object. The well is the name object's
+        own stone, not a hole next to it."""
+        before = card((210, 205, 200))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1710, 280), fill=(42, 44, 48, 255))
+        draw.rectangle((120, 160, 700, 240), fill=(198, 152, 64, 255))
+        draw.rectangle((1450, 120, 1710, 280), fill=(210, 200, 180, 255))
+        title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 720 / 1792, 250 / 2400)
+        after = compositor.compose(
+            before.copy(), {**FACE, "mana_cost": "{2}{G}"},
+            {"title": title, "name": name}, lettered=True,
+        )[0]
+        bp, ap = before.load(), after.load()
+        changed_x = [
+            x for y in range(120, 280) for x in range(80, 1710, 2)
+            if bp[x, y] != ap[x, y]
+        ]
+        self.assertTrue(changed_x, "no pips stamped")
+        self.assertGreater(min(changed_x), 720, f"pips ran into the name: x={min(changed_x)}")
+        self.assertLess(max(changed_x), 1450, f"pips sat in the painted slot: x={max(changed_x)}")
+
+    def test_a_well_too_short_is_not_smash_stamped(self):
+        """LETTERED-OVERLAP v3, Triumph of the Hordes. Name ran to 0.78, well
+        started at 0.73, `{2}{G}{G}` still shrank to the floor and stamped
+        overlapping ovals. No room means no stamp — `cost_off_rim` already
+        forces the repaint."""
+        before = card((210, 205, 200))
+        draw = ImageDraw.Draw(before)
+        draw.rectangle((80, 120, 1710, 280), fill=(42, 44, 48, 255))
+        draw.rectangle((110, 150, 1580, 250), fill=(198, 152, 64, 255))
+        title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
+        name = (110 / 1792, 150 / 2400, 1580 / 1792, 250 / 2400)
+        face = {**FACE, "mana_cost": "{2}{G}{G}"}
+        title_px = compositor._box(title, before.size)
+        name_px = compositor._box(name, before.size)
+        self.assertFalse(compositor.cost_fits(before, face, title_px, name_px))
+        after = compositor.compose(
+            before.copy(), face, {"title": title, "name": name}, lettered=True,
+        )[0]
+        self.assertEqual(before.tobytes(), after.tobytes())
 
     def test_a_card_with_no_cost_is_left_untouched(self):
         before = self.blank()

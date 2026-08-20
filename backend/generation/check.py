@@ -290,7 +290,7 @@ def _quote(text, limit=90):
     return repr(text if len(text) <= limit else text[: limit - 1] + "…")
 
 
-def proofread(face, read):
+def proofread(face, read, only=None):
     """Does this lettered card say what Scryfall says? Worst first, empty means it does.
 
     THE RULE THIS EXISTS FOR is the one `CLAUDE.md` says survived everything else: a card whose
@@ -307,6 +307,10 @@ def proofread(face, read):
     Writing painted into the ARTWORK is not graded, on the same evidence `_offending_marks` was
     narrowed on: Delver of Secrets came back twice with arcane script in its scene, which is
     illustration and not card text. What is graded is every surface a reader takes for card text.
+
+    `only` limits which surfaces we authored by painting — the product hybrid (`name_lettered`)
+    paints the name and stamps the rest, so only `title_plate` is graded as ours-to-match.
+    Writing on a surface we stamp is `text_extra`: it will collide with Scryfall type.
     """
     problems = []
     patches = read.get("text") or []
@@ -326,7 +330,10 @@ def proofread(face, read):
         )
 
     graded = set()
-    for where, expected, what in _expected(face):
+    fields = _expected(face)
+    if only is not None:
+        fields = tuple(field for field in fields if field[0] in only)
+    for where, expected, what in fields:
         graded.add(where)
         printed = " ".join(surfaces.get(where) or [])
         if not expected:
@@ -415,7 +422,8 @@ def cost_collides(face, read):
         "cost_no_room",
         f"the name runs to {name[2]:.2f} across the card and the mana cost has to start at "
         f"{starts_at:.2f} to fit the plate — the cost would be stamped on top of the name. Paint "
-        "the name shorter and leave the right-hand end of the top plate bare, as the brief asks",
+        "the name shorter so it stops before the reserved end. That end is the same stone, wood "
+        "or metal as the rest of the name object — not a second box, not a pale cutout.",
     )
 
 
@@ -437,8 +445,8 @@ def cost_off_rim(image, face, read):
     return Problem(
         "cost_no_room",
         "the inner face of the title plate is too short for this mana cost — the last pip "
-        "would sit on the rim. Leave more of the right-hand end of the top plate bare, as "
-        "the brief asks",
+        "would sit on the rim. Stop the name sooner so the reserved end of the name object "
+        "is the same material as the rest of it, empty of letters, not a second box.",
     )
 
 
@@ -685,34 +693,12 @@ def contrast(card, panels, ink=20):
 OBSTRUCTION_MAX = 0.05
 """Share of the rules panel's interior that may be painted OVER before the art is repainted.
 
-MEASURED 2026-08-17 on six blanks, against the share of each card's glyph pixels that actually landed
-on painted foreground. THE FIRST THREE ARE WHAT THIS WAS CALIBRATED ON; THE SECOND THREE ARE WHY IT
-IS KNOWN TO BE A PROXY AND NOT THE MEASUREMENT ANYONE WANTS:
+MEASURED 2026-08-19 night on COMPOSITED-OBJECT. At 0.15 the gate shipped unreadable rules —
+Thirsting Roots and Triumph have vines and a dragon through the words. His crops: the TEXT BAND
+has to stay readable. 0.05 over-fires on a corner vine; that costs a repaint. 0.15 ships a card
+nobody can play. Repaint is the cheaper mistake.
 
-    Sol Ring     (original)     0.011 obstructed    0.0% of its text colliding
-    Craterhoof   (original)     0.091               8.4%     vines across the scroll
-    Terror       (original)     0.186               9.6%     a branch through the slab
-    Sol Ring     (art deco)     0.032               0.0%
-    Craterhoof   (pixel art)    0.072               0.0%     paint at the corners and torn edge
-    Lightning B. (comic book)   0.112               0.0%     paint at the corners and torn edge
-
-0.091 ruins a card's text and 0.112 leaves it untouched, so this statistic DOES NOT ORDER the defect
-it is named for. What separates them is WHERE the paint sits: across the middle on the originals,
-around the rim and corners on the new three. At 0.05 it therefore over-fires — it refused two of the
-three cards in the 2026-08-17 style run that were visually fine.
-
-MEASURING THE TEXT BAND INSTEAD WAS TRIED THE SAME DAY AND REVERTED. Laying the block out through
-`textlayout.fit_across` inside this module reproduces neither the boxes `cards.compositor._rules`
-uses (`printable_face`-adjusted, not raw) nor its `_assign` split across strips nor its shield
-excludes, and the band came out wrong enough to PASS the original Craterhoof at 8.4% collision — a
-false negative, which is worse than the over-firing it was meant to cure. Doing it properly means
-measuring after compositing, where the glyph mask is real, and that needs `compose`'s return plumbed
-through ~20 call sites. Until then this stays a deliberately blunt instrument that costs a repaint
-when it is wrong rather than shipping a card with words on a branch.
-
-`contrast` sees none of it either: it takes the panel's MEAN, and Craterhoof's scroll means 211 with
-the vines across it and 222 without — a 5% move for the defect that put "you control." on top of a
-vine. Obstruction is local, and a mean is the one statistic that hides it.
+A thin vine on a CORNER can still pass. A mass through "Proliferate" cannot.
 """
 
 
@@ -758,9 +744,9 @@ def obstructed(blank, panels, face=None):
         return None
     return Problem(
         "panel_obstructed",
-        f"{worst:.1%} of the rules panel is painted over — the text has to share the surface with "
-        "the scene, so keep the vines, branches and rigging OUTSIDE the panel's rim and leave its "
-        "face completely bare",
+        f"{worst:.1%} of the rules panel is painted over — keep vines, branches, chains and the "
+        "subject OFF the TEXT BAND so the rules can be read across a table. A crossing may hook a "
+        "rim or a corner; it may not run through the words",
     )
 
 
