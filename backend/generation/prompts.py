@@ -719,8 +719,17 @@ QUALITY = (
 # So identity is taken and composition is refused, in that order and in those words. Saying only
 # "do not copy it" is the failure mode on the other side: the model drops the character too, and
 # the client's first complaint about the whole batch was cards that did not look like the subject.
+REFERENCE_OPENING = "The attached image is the card's official artwork."
+"""Split out only so `exemplar_full` can REPLACE it rather than prepend to it.
+
+With exemplars attached, "the attached image" is ambiguous — there are four — and the first draft
+of that brief said "THE LAST ATTACHED IMAGE is the card's official artwork." immediately before
+this sentence said it again about a different image. Two contradictory labels for the same
+attachment is worse than one vague one.
+"""
+
 REFERENCE = (
-    "The attached image is the card's official artwork. Take from it ONLY WHO OR WHAT the "
+    REFERENCE_OPENING + " Take from it ONLY WHO OR WHAT the "
     "subject is — the character's identity, build, gear, and the markings and colours that make "
     "them recognisable at a glance. Do not restage the picture: invent a NEW moment for them, "
     "with a different pose, a different action, a different angle and a different setting from "
@@ -989,7 +998,7 @@ def _has_tab(face, lettered=False):
     return face.get("power") is not None or (lettered and face.get("loyalty") is not None)
 
 
-def _writing_ban(borderless, lettered, name_lettered=False):
+def _writing_ban(borderless, lettered, name_lettered=False, cost_lettered=False):
     """The last sentence of the brief, and its last place is measured — see the call site.
 
     INVERTED, NOT DELETED, when the model letters the card itself. The ban's job was never "no
@@ -1000,9 +1009,23 @@ def _writing_ban(borderless, lettered, name_lettered=False):
 
     `name_lettered` is the product split: only the name is on the whitelist. Type, rules and P/T
     stay banned because we stamp them — a model-painted type line under our type line is two copies.
+
+    `cost_lettered` moves the mana cost from the ban to the whitelist, Phase 3. The clause has to
+    be inverted and not merely softened: it currently says the cost "is not yours to paint" in the
+    sentence that overrides everything above it, so leaving it in place would beat the instruction
+    to draw it. The mana symbols that stay banned are the ones ANYWHERE ELSE, which is the same
+    whitelist logic the rest of this applies to words.
     """
     elsewhere = "not the scene" if borderless else "not the edge material"
     if lettered:
+        cost_clause = (
+            "The ONLY mana symbols on the card are the ones in \"mana_cost\", drawn once, in "
+            "their stated place — plus any that are part of a rules-text line. No mana symbol "
+            "appears anywhere else."
+            if cost_lettered else
+            "AND NO MANA SYMBOLS — the mana cost is not one of the strings above and is not "
+            "yours to paint."
+        )
         return (
             "ABSOLUTE REQUIREMENT, overriding everything above: the ONLY writing anywhere on this "
             "image is the exact strings given at the top, each in its stated place and each "
@@ -1010,9 +1033,8 @@ def _writing_ban(borderless, lettered, name_lettered=False):
             ", not the gaps between the surfaces, and not the unused part of any surface. No "
             "extra words, no invented names, no flavour text, no artist credit, no collector "
             "number, no copyright line, no glyphs, no decorative script, no fake writing, no "
-            "watermark, no emblem, no set symbol, AND NO MANA SYMBOLS — the mana cost is not one "
-            "of the strings above and is not yours to paint. Every part of every surface that is "
-            "not carrying one of those strings is bare stone, bare wood, bare metal — blank."
+            f"watermark, no emblem, no set symbol. {cost_clause} Every part of every surface that "
+            "is not carrying one of those strings is bare stone, bare wood, bare metal — blank."
         )
     if name_lettered:
         return (
@@ -1073,8 +1095,14 @@ def _cost_room(tokens):
     return min(COST_ROOM_MAX, max(COST_ROOM_MIN, len(tokens) * per_pip + 0.04))
 
 
-def _lettering_block(face):
+def _lettering_block(face, faces_from_exemplars=False, cost_lettered=False):
     """The card handed over as DATA, for the mode where the model letters it itself.
+
+    `faces_from_exemplars` replaces the closing typographic instruction. The default asks for
+    "one clean serif throughout", which is safe, and is also exactly why every card we ship reads
+    as typeset: the client's cards set the NAME in a display face matched to the art — glowing on
+    Kaalia, bevelled letterpress caps on Avacyn, an outlined cartoon face on Counterspell — and
+    only the body text in a serif. Off by default so the measured control path is unchanged.
 
     EXPERIMENT 2026-08-19, `Project Material/EXPERIMENT-json-lettering-2026-08-19/`. The mode this
     brief was built for withholds the text on purpose — see the writing ban at the end — because
@@ -1101,6 +1129,20 @@ def _lettering_block(face):
     So the cost stays OURS, stamped from the 84 vendored Scryfall SVGs by `compositor` after the
     fact, and the brief reserves the room for it instead. It is the one field where we have the
     artwork and the model does not.
+
+    `cost_lettered` REVERSES THAT, and Phase 3 of `../PLAN-EXEMPLAR-PIVOT-2026-08-20.md` is why.
+    Two things changed under it. The stamped cost is the most obviously pasted-on element on every
+    card we produce, and on 12 of the client's 19 favorites the cost is a drawn medallion rather
+    than a row of pips at the end of the title bar. And the reservation stopped working: every
+    exemplar has its cost drawn INTO a full-width plate, so "leave the right-hand 16% empty of
+    letters" now argues with three images, and `cost_no_room` fired on 3 of the client's 7 on
+    2026-08-20 with Tower Winder shipping no cost at all.
+
+    The 18-of-22 measurement above did not become wrong, so it is not ignored — it is handled
+    downstream instead of by construction. `check.proofread` grades the cost symbol by symbol
+    against Scryfall, and `pipeline` stops asking the model after a `cost_wrong` and stamps it. The
+    four failure shapes on record — ten pips, six pips, hybrid drawn as two, Phyrexian drawn as
+    plain — are exactly what `check._symbols` compares, so each one is caught rather than shipped.
     """
     # A FIELD THE CARD DOES NOT HAVE IS ABSENT, never present and empty. bd mtg-m8q: a card told
     # about a surface it does not have has been told to paint it — a blank P/T shield came back on
@@ -1108,6 +1150,11 @@ def _lettering_block(face):
     # which is one more thing to get wrong than saying nothing at all. Lands have no mana cost and
     # vanilla creatures no rules text, so this is not a rare path.
     card = {"name": face["name"]}
+    if cost_lettered and face.get("mana_cost"):
+        # SECOND KEY, right after the name, because that is where it sits on the card. A land has
+        # no cost and gets no key — bd mtg-m8q again: a card told about a field it does not have
+        # has been told to paint it.
+        card["mana_cost"] = face["mana_cost"]
     card["type_line"] = face["type_line"]
     if face.get("oracle_text"):
         card["rules_text"] = face["oracle_text"]
@@ -1119,7 +1166,10 @@ def _lettering_block(face):
     if face.get("loyalty") is not None:
         card["loyalty"] = str(face["loyalty"])
     where = [
-        ('"name"', "IN the object across the top, left-aligned — see the reserved end below."),
+        ('"name"', "IN the object across the top, left-aligned."
+                   if cost_lettered else
+                   "IN the object across the top, left-aligned — see the reserved end below."),
+        ('"mana_cost"', "DRAWN as real Magic mana symbols, near the name — see below."),
         ('"type_line"', "IN the narrow type object, LEFT-ALIGNED, and NOWHERE ELSE. The "
          "RIGHT-HAND END of that object stays BARE — see below. Printing it a second time "
          "anywhere on the card is a failed image."),
@@ -1146,6 +1196,36 @@ def _lettering_block(face):
         # LETTERED-OVERLAP v3 (bd mtg-2su): "STAYS COMPLETELY BARE / nothing on it at all" plus
         # "Do NOT paint a circle, a gem, a disc" came back as a pale rectangular cutout with our
         # pips sitting in it. Reserve emptiness of LETTERS, not emptiness of material.
+        #
+        # THE COST, DRAWN — Phase 3, and the reservation block below is its `else`. Placement first
+        # and count second: the count is the half the model was measured failing (`{11}` as ten
+        # pips, `{G/W}` as two circles), and a rule it is about to break belongs next to the thing
+        # it constrains rather than in a ban list at the end.
+        #
+        # The medallion is the client's evidence, not our taste: on 12 of his 19 favorites the cost
+        # is a drawn medallion or a second row under the name rather than pips at the end of the
+        # title bar. OFFERED and not required — an exemplar carries the look, and `check` grades
+        # which symbols were drawn, never where they sit.
+        *(
+            [
+                "THE MANA COST IS YOURS TO DRAW, as real Magic mana symbols — one round pip per "
+                "symbol in the game's own colours: white a pale ivory circle, blue light blue, "
+                "black grey-black, red red, green green, and a generic number a grey circle with "
+                "the numeral in it. Each pip is an object on this card, struck or set into the "
+                "material the way the lettering is, catching this scene's light.",
+                "PUT IT NEAR THE NAME. Either is right: a row at the right-hand end of the name's "
+                "own object, or its own small medallions on a second row just under the name — "
+                "whichever the composition wants.",
+                f"DRAW EXACTLY {len(cost)} SYMBOL(S), in the order given in \"mana_cost\" above, "
+                "reading left to right. Not one more, not one fewer: count them. A number in "
+                "braces such as {11} is ONE circle with that number written in it, never that "
+                "many circles. A symbol written with a slash such as {G/W} or {G/P} is ONE circle "
+                "split down the middle with a half of each, never two circles side by side.",
+                "",
+            ]
+            if cost_lettered and (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
+            else []
+        ),
         *(
             [
                 f"THE RIGHT-HAND {_cost_room(cost) * 100:.0f}% OF THE TOP PLATE IS RESERVED for "
@@ -1157,7 +1237,7 @@ def _lettering_block(face):
                 "a mana cost, a mana symbol, a second rectangle or a cutout there.",
                 "",
             ]
-            if (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
+            if not cost_lettered and (cost := symbols.TOKEN.findall(face.get("mana_cost") or ""))
             else []
         ),
         # SIGNOFF 2026-08-19, Elesh Norn. The type line was the words
@@ -1190,8 +1270,17 @@ def _lettering_block(face):
         "smaller artwork, because cramped or tiny lettering makes the card unusable. Short rules "
         "text gets a SHORT strip and bigger artwork — one line of text in a strip covering a "
         "third of the card is just as wrong, and a strip must never be left half empty.",
-        "Set the lettering large enough to read across a table, level, correctly spelled, and in "
-        "one clean serif throughout.",
+        (
+            "Set every string large enough to read across a table and spell it correctly. The "
+            "NAME is DRAWN, not typed: use a display face that belongs to this card's art and to "
+            "the reference cards' — carved, cast, glowing, brushed or inked as the material wants "
+            "— and let it fill its object. The type line and the rules text are a plainer "
+            "readable face, and their lines follow their own object: if that object curves, "
+            "sags or tilts, the lettering follows it, the way it does on the reference cards."
+            if faces_from_exemplars
+            else "Set the lettering large enough to read across a table, level, correctly "
+            "spelled, and in one clean serif throughout."
+        ),
     ]
 
 
@@ -1239,9 +1328,170 @@ def _name_lettering_block(face):
     ]
 
 
+def exemplar_full(
+    face, archetype, exemplars=0, style=None, reference=True, licensed=False,
+    direction=None, palette=None, notes=None, corrections=(), cost_lettered=False,
+):
+    """Creative Full, briefed by SHOWING the look instead of describing it.
+
+    Phase 1 of `../PLAN-EXEMPLAR-PIVOT-2026-08-20.md`. `creative_full` dispatches here whenever an
+    archetype is chosen; with no archetype it runs its own brief unchanged, which is what makes
+    this an A/B rather than a rewrite.
+
+    WHY THIS IS SHORT, and `creative_full` is 900 lines. That brief grew one sentence per defect
+    for a fortnight and its own comments record three clauses pulling against each other. MEASURED
+    2026-08-20: brief elasticity on panel geometry is 0.10 over 58 faces, our composited cards
+    average 12.80 straight plate rims against the client's 2.32, and until today the model had
+    never been shown one of his cards. Prose has no authority over layout. An image does, so
+    everything the exemplars can carry is deleted here rather than restated: the surface shape
+    list, the texture clauses, the full-bleed argument and the corner ban are all gone.
+
+    WHAT IS KEPT is everything that is a per-card FACT rather than a description of a look — the
+    strings to letter, the colour identity, the staging, the licensed-crossover path, the writing
+    ban — because no exemplar can tell the model what THIS card says or what colour it is.
+
+    THE FRAME IS COMPULSORY HERE, and that is the reversal of `borderless`. All 19 of the client's
+    favorites close the card with an illustrated border on all four sides. `borderless=True` has
+    been the default since 2026-08-13 on a misreading of "no black or white borders", and its
+    block says in as many words that material "bent to follow all four sides ... has stopped being
+    scene and closed the picture in, which is the one thing it must never do" — a direct
+    instruction not to paint the thing every one of his cards has.
+    """
+    lines = [
+        "You are a senior Magic: The Gathering card artist AND its letterer.",
+        "",
+        "Paint a COMPLETE fantasy trading card face — the artwork, the card's frame and its "
+        "raised surfaces together, as one integrated illustration, with ALL of its lettering set "
+        "into it.",
+    ]
+
+    # THE IMAGES, BY POSITION. `gemini.generate` documents this order as a contract, because a
+    # model told which image is which can act on it and a model left to guess cannot. The two
+    # kinds are opposites: the exemplars give construction and nothing else, the artwork gives
+    # identity and nothing else, and saying so twice is cheaper than one card taking colour from
+    # the wrong image.
+    if exemplars:
+        plural = "images are" if exemplars > 1 else "image is"
+        lines += [
+            "",
+            f"THE FIRST {exemplars} ATTACHED {plural.upper()} FINISHED REFERENCE CARDS. Build "
+            "this card the way they are built. Study and match:",
+            "  - HOW THE FRAME IS MADE — that a decorated border closes the card on all four "
+            "sides, how thick it is, how it turns the corners, and how it is drawn in the same "
+            "material and the same light as the picture inside it.",
+            "  - HOW EACH RAISED SURFACE IS A DEPICTED OBJECT — a carved banner, a torn scroll "
+            "with curled rods, a sagging ribbon, a cast plaque — with thickness, a lit edge and "
+            "its own shadow. Not one of them is a plain rectangle with a stroke around it.",
+            "  - HOW THE LETTERING IS DRAWN — the name in a display face that belongs to the "
+            "material, the body text in a plainer face, and each line following the object it "
+            "sits on rather than ignoring its shape.",
+            "  - HOW LITTLE OF THE CARD IS STRAIGHT LINES. Their surfaces stop short of the "
+            "card's sides and their edges are curved, torn or carved rather than ruled.",
+            # THE ONE THING THE EXEMPLARS MUST NOT CARRY. The `tangle` set is three blue-black
+            # cards, so a card that takes their palette misstates its own colour identity — which
+            # `check.colour_identity` fires on and CLAUDE.md calls a bug the client reported.
+            # Stated as a positive redirect and not only as a ban, because a ban on its own has
+            # lost on this project four times (see `REFERENCE`).
+            "",
+            "TAKE NOTHING ELSE FROM THEM. Not their subject, not their setting, not their colour "
+            "and not their palette — this card's colour comes from its own mana cost, stated "
+            "below, and a card painted in a reference card's colours is a wrong card. Take HOW "
+            "THEY ARE BUILT and paint THIS card's subject in THIS card's colours.",
+        ]
+
+    lines += ["", "The card:", _subject(face, licensed=licensed)]
+    lines += _lettering_block(
+        face, faces_from_exemplars=bool(exemplars), cost_lettered=cost_lettered
+    )
+    lines += ["", _palette(face.get("color_identity") or [], strict=True)]
+
+    if reference:
+        # REPLACED, not prefixed: `REFERENCE` names the attachment in its own first sentence, and
+        # "the attached image" is ambiguous once three exemplars precede it. Only re-labelled when
+        # something actually does precede it.
+        lines += [
+            "",
+            REFERENCE.replace(
+                REFERENCE_OPENING,
+                "THE LAST ATTACHED IMAGE is the card's official artwork.",
+                1,
+            ) if exemplars else REFERENCE,
+            _staging(face),
+        ]
+
+    # THE FRAME. Short on purpose: the exemplars carry its construction, and this says only the
+    # three things no image can settle — that it is compulsory, which archetype, and where the
+    # one hard boundary is.
+    lines += [
+        "",
+        "THE CARD'S FRAME, and every card has one:",
+        "A decorated border closes the card on ALL FOUR SIDES. For this card it is "
+        f"{ARCHETYPE_NOTES[archetype]}.",
+        "It is part of the painting, not laid over it: built from this scene's own material, lit "
+        "by this scene's light, with the picture continuing behind it and something from the "
+        "scene crossing in FRONT of it at a point or two.",
+        # MEASURED 2026-08-20: 7 of his 19 set the frame inside a flat dark surround — outer-band
+        # gradient below 1.0 on Avacyn, both Command Towers, Hullbreaker, Aurelia, Force of Will
+        # and Brainstealer — which matches his own "id be okay with black borders or black going
+        # around". So the choice is free and only the PALE margin is banned. Saying "dark is
+        # allowed" out loud also stops the model reading "frame" as a gallery mount.
+        "The frame may run right off all four edges of the image, or it may sit inside a dark "
+        "surround. Either is right. What is never right is a PALE margin: no white, cream, grey "
+        "or light border, no printed mat, and no page the card appears to be lying on.",
+        "This image is NOT a photograph of a card. It has no rounded corners of its own, no cut "
+        "edge and no drop shadow, and the image is rectangular right into each corner pixel.",
+    ]
+
+    if style:
+        lines += ["", f"Art style: {_style_text(style)}. This governs the whole picture — the "
+                  f"frame and the surfaces as much as the art."]
+    if direction:
+        lines += ["", f"Composition: {_catalogue_text(direction, DIRECTIONS)}."]
+    if palette:
+        lines += ["", _palette_clause(palette, face.get("color_identity") or [])]
+    if notes:
+        lines += ["", f"Also: {notes}."]
+    if corrections:
+        lines += ["", _repaint_clause(corrections)]
+
+    # Last, and its last place is measured — see `_writing_ban`. `borderless=False` because this
+    # card HAS edge material, which is what that argument selects the wording for.
+    # `draws_cost`, not `cost_lettered` — see the same line in `creative_full`. A land has no cost,
+    # so the ban must not whitelist a field the JSON above does not contain.
+    lines += [
+        "",
+        _writing_ban(
+            borderless=False, lettered=True,
+            cost_lettered=bool(cost_lettered and face.get("mana_cost")),
+        ),
+    ]
+    return "\n".join(lines)
+
+
+ARCHETYPE_NOTES = {
+    "portal": "an architectural arch, gate or window — columns down the sides, a lintel or "
+              "keystone across the top — with the artwork seen through the opening inside it",
+    "tangle": "organic growth closing the card: vine, thorn, root, branch or tentacle, thick at "
+              "the corners and thinner along the sides, never an even width",
+    "banner": "a carved or cast border with the name on a hanging banner across the top and the "
+              "rules on a scroll with a rod or curl at each end",
+    "panel": "a bold flat-graphic border — heavy ink outlines, screen-printed colour, pipes, "
+             "gears, growths or bubbles — with the captions in outlined boxes",
+    "mural": "one continuous scene with no separate opening: the frame is the scene's own "
+             "material thickening at the edges, and the text sits on surfaces found in the scene",
+}
+"""What each archetype's frame IS, in one clause. The exemplars carry everything else.
+
+Kept beside `exemplar_full` rather than in `generation.exemplars` because it is prompt wording:
+`exemplars.ARCHETYPES` describes the archetypes for a human reading `--help`, and drifting the
+two apart is cheaper than importing prompt text into the asset loader.
+"""
+
+
 def creative_full(
     face, style=None, reference=True, licensed=False, direction=None, palette=None, notes=None,
-    borderless=True, corrections=(), lettered=False, name_lettered=False,
+    borderless=True, corrections=(), lettered=False, name_lettered=False, archetype=None,
+    exemplars=0, cost_lettered=False,
 ):
     """The Creative Full brief: art AND the card's furniture, with every panel left EMPTY.
 
@@ -1286,6 +1536,16 @@ def creative_full(
     body furniture. His favorites letter the whole card into the scene. We still
     withhold the mana cost and stamp Scryfall pips. `--composited` stamps every field.
     """
+    # PHASE 1 DISPATCH. An archetype means the look is carried by attached reference cards, so the
+    # brief below — the one that grew a sentence per defect for a fortnight — is not used at all.
+    # Kept side by side rather than replaced: with no archetype this function is byte-identical to
+    # what produced every measurement on record, which is what makes the comparison an A/B.
+    if archetype:
+        return exemplar_full(
+            face, archetype, exemplars=exemplars, style=style, reference=reference,
+            licensed=licensed, direction=direction, palette=palette, notes=notes,
+            corrections=corrections, cost_lettered=cost_lettered and lettered,
+        )
     if lettered:
         name_lettered = False
     paints_name = lettered or name_lettered
@@ -1336,8 +1596,12 @@ def creative_full(
         # the likeness.
         _subject(face, licensed=licensed if paints_name else True),
     ]
+    # `draws_cost` and not `cost_lettered`: a land has no cost to draw, so the ban at the end must
+    # keep forbidding mana symbols outright rather than whitelisting a `"mana_cost"` field that is
+    # not in the JSON. Caught by `test_a_land_is_told_nothing_about_a_cost_it_does_not_have`.
+    draws_cost = bool(cost_lettered and lettered and face.get("mana_cost"))
     if lettered:
-        lines += _lettering_block(face)
+        lines += _lettering_block(face, cost_lettered=cost_lettered)
     elif name_lettered:
         lines += _name_lettering_block(face)
         if abilities:
@@ -1939,7 +2203,7 @@ def creative_full(
         # separately because it is new and because carved runes along a border are exactly the
         # decoration a model reaches for — Twinflame Tyrant on their own site has painted fake
         # runes sitting beside its real composited rules text.
-        _writing_ban(borderless, lettered, name_lettered),
+        _writing_ban(borderless, lettered, name_lettered, cost_lettered=draws_cost),
         # CLIENT 2026-08-13, circling the swirl beside the reference site's own type line: "these
         # are set symbols, to know which set the cards from, but these are proxies that dont have
         # a set so its just a random symbol and actually sometimes ive seen it put a real symbol

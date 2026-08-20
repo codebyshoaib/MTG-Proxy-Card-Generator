@@ -12,8 +12,10 @@ reference-site cards with one card appearing ten times, the rules panel landed a
 y≈0.20 to y≈0.85 — full width, a narrow right-hand float, sometimes two.
 """
 
+import io
 import json
 
+from PIL import Image
 from google.genai import types
 
 from generation import gemini
@@ -170,10 +172,17 @@ and printing on it is exactly the mistake to avoid.
 If the second image shows no such tab at all, omit "pt_detail"."""
 
 
-SURFACES = ("title_plate", "type_strip", "rules_panel", "tab", "artwork", "edge", "other")
+SURFACES = ("title_plate", "cost", "type_strip", "rules_panel", "tab", "artwork", "edge", "other")
 """Where a patch of writing sits, as the read-back is allowed to answer.
 
 An enum rather than free text so `check.proofread` can group by surface without parsing prose.
+
+`cost` is its OWN surface and not part of `title_plate`, added with Phase 3. The two live in the
+same place on a classic card and in different places on the client's — in 12 of his 19 the cost is
+a medallion on a second row under the name — so grouping them would make the grade depend on
+layout. Separating them also lets `check` compare the cost as an ordered run of SYMBOLS while
+everything else is compared as text, which is the whole point: `{G}{W}` and `{W}{G}` are different
+costs, and `_normalised` would strip the braces that carry that.
 """
 
 READ_SCHEMA = {
@@ -190,6 +199,13 @@ READ_SCHEMA = {
         # box the same way `cost_collides` needs the title plate. Asked as geometry, not as
         # "is there a set symbol" — a yes/no here would grade the hint.
         "type": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the type-line strip, full width"},
+        # WHY A BOX AND NOT JUST THE TRANSCRIPTION, which this call also returns: because the
+        # transcription of the cost cannot be trusted while the card's NAME is in the same image.
+        # Measured on `packs/cost-hard.json`, 2026-08-20 — this call read Kitchen Finks as
+        # `{1}{G/W}{G/W}` when the card plainly carries `{1}` and two separate pips, and read
+        # Niv-Mizzet's five pips as six. Cropped to this box, with the name gone, it read both
+        # correctly. `cost_read` does the second look; this is the only thing it needs from here.
+        "cost": {**BOX, "description": "[ymin, xmin, ymax, xmax] of the run of mana symbols"},
         "rules": {
             "type": "array",
             "items": BOX,
@@ -224,6 +240,11 @@ FIRST, transcribe. Find every separate patch of writing anywhere on this card an
   braces per symbol drawn, and if a symbol is drawn that you cannot name write {?}.
 - "where": which surface it sits on, one of:
     title_plate  the plate across the very top
+    cost         the card's MANA COST — the run of small round symbols grouped near the name,
+                 wherever it sits: at the right end of the name's plate, on a second row beneath
+                 it, or on its own medallions. Report them in the order they read, left to right,
+                 as one entry. A mana symbol inside a sentence of body text is rules_panel and
+                 NOT this, and an ability's cost on the rules strip is rules_panel too.
     type_strip   the narrow horizontal strip lower down
     rules_panel  the broad pale strip holding body text
     tab          the small raised tab near the bottom-right corner
@@ -243,6 +264,10 @@ SECOND, report bounding boxes as [ymin, xmin, ymax, xmax] normalised 0-1000:
   — keep that part IN the box. What must stay OUT is anything past where the plate itself stops.
 - "name": the box of the card's NAME as it is lettered on that plate — the printed letters only,
   from the first letter to the last, not the whole plate.
+- "cost": the box of the MANA COST — the run of small round symbols described above, from the
+  left edge of the first symbol to the right edge of the last, tight around the symbols
+  themselves. Include every symbol in the run and NOTHING else: no letters of the name, no part
+  of the plate beyond them. Omit this key if the card carries no such run of symbols.
 - "type": the narrow strip the type line sits on, FULL extent from its left end to its right end,
   inside its carved rim. If a badge, vine or creature crosses in FRONT of part of it, the strip
   still runs behind — keep that part IN the box.
@@ -399,7 +424,7 @@ def read_back(png, face):
         for patch in (raw.get("text") or [])
         if (patch.get("text") or "").strip()
     ]}
-    for key in ("title", "name", "type"):
+    for key in ("title", "name", "type", "cost"):
         box = _usable(raw.get(key))
         if box:
             read[key] = box
@@ -407,6 +432,117 @@ def read_back(png, face):
     if rules:
         read["rules"] = sorted(rules, key=lambda box: box[1])
     return read
+
+
+COST_MARGIN = 0.01
+"""How much of the card to leave around the cost box when cropping it out for `cost_read`.
+
+A little, because the point of the crop is what it EXCLUDES. Too tight and a pip's outer ring is
+sliced, which invents a defect; too loose and the name comes back into frame, which is the entire
+failure being fixed. One percent of the card's long edge is a few pixels of breathing room at the
+sizes the model returns and nowhere near the name on any card measured.
+"""
+
+
+def cost_read(png, box):
+    """The mana cost as it is actually PAINTED, read from a crop with no name in it.
+
+    A SECOND VISION CALL, and the cheapest honest one available. `read_back` transcribes the whole
+    card, and its transcription of the cost is not evidence: the card's NAME is in that image, so
+    the model recognises the card and reports the cost it remembers. Measured on
+    `packs/cost-hard.json`, 2026-08-20, same pixels both ways:
+
+        Kitchen Finks       whole card {1}{G/W}{G/W}      crop {1}{G}{W}       painted: two plain pips
+        Niv-Mizzet, Parun   whole card {U}{U}{U}{R}{R}{R}  crop {U}{U}{U}{R}{R}  painted: five pips
+
+    Both passed the sighted grade, and the second was stored `status: "ok"` — a wrong cost, on the
+    exact card whose recorded failure is that same wrong cost. Cropped, the model read 4 of 4
+    right, including both of those.
+
+    The pattern the batch gives us is that the grader READS WORDS and RECALLS SYMBOLS. It caught a
+    substituted `{G/P}` inside a rules line and a pip count of nine-for-ten, and missed both
+    pip-SHAPE questions — because a hybrid pip is not a string to be read, it is a question about a
+    picture, and on that the model prefers its prior to the pixels. So the crop is not a general
+    improvement to be applied everywhere: it is the fix for symbols specifically, and it works by
+    removing the only thing in the image that identifies the card.
+
+    NO EXPECTED STRING HERE EITHER, for the reason `read_back` gives. This asks a narrower question
+    than that call does, of a picture with nothing in it but the pips.
+    """
+    image = Image.open(io.BytesIO(png))
+    width, height = image.size
+    x0, y0, x1, y1 = box
+    crop = image.crop((
+        max(0, int((x0 - COST_MARGIN) * width)), max(0, int((y0 - COST_MARGIN) * height)),
+        min(width, int((x1 + COST_MARGIN) * width)), min(height, int((y1 + COST_MARGIN) * height)),
+    ))
+    buffer = io.BytesIO()
+    crop.convert("RGB").save(buffer, format="PNG")
+
+    response = gemini.client().models.generate_content(
+        model=MODEL,
+        contents=[
+            types.Part.from_bytes(data=buffer.getvalue(), mime_type="image/png"),
+            COST_PROMPT,
+        ],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=COST_SCHEMA,
+            temperature=0,
+        ),
+    )
+    return (json.loads(response.text or "{}").get("symbols") or "").strip()
+
+
+COST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "symbols": {
+            "type": "string",
+            "description": "the symbols drawn, in brace notation, left to right",
+        },
+    },
+}
+
+COST_PROMPT = """This is a small crop from a fantasy trading card. It shows a short row of round
+symbols. Report ONLY what is drawn in this crop, symbol by symbol, left to right, in "symbols".
+
+Use brace notation, one pair of braces per SYMBOL DRAWN:
+
+    {W} {U} {B} {R} {G}   a single-coloured pip: one circle, one colour, one pictogram in it
+                          — sun, water drop, skull, flame, tree
+    {C}                   colourless: one circle with an angular diamond or eye-like mark
+    {1} {2} {7}           a circle with a NUMERAL in it. Report the numeral you see.
+    {X}                   a circle with the letter X in it
+    {G/W} {U/R} etc.      ONE circle CUT IN TWO BY A STRAIGHT LINE across it, with a DIFFERENT
+                          PICTOGRAM ON EACH SIDE of that line — two pictograms inside one circle.
+                          The dividing line is the test. A circle with a coloured BORDER, RING,
+                          RIM or outline around a differently-coloured middle is NOT this: it is
+                          one plain pip with a ring, however many colours you can count in it.
+                          Two pictograms in one circle, or nothing.
+    {G/P} {W/P} etc.      ONE circle carrying the Phyrexian mark — an inverted stylised Φ, like a
+                          smooth two-pronged hook — instead of a normal pictogram.
+    {?}                   a symbol you cannot identify at all
+
+COUNT THE CIRCLES, and let the count decide the answer. This is the whole job, so slow down on it:
+
+- Report exactly as many symbols as there are circles in the crop. Five circles is five symbols.
+  Do not report a number of symbols that differs from the number of circles you can see.
+- TWO ADJACENT CIRCLES, each with ONE pictogram in it, are TWO SEPARATE SYMBOLS — a circle holding
+  a tree beside a circle holding a sun is {G}{W}, and it is NOT {G/W}, and it is not {G/W}{G/W}
+  either. Write a split symbol ONLY for a circle you can see a dividing line across, with a
+  pictogram on each side of it. Count pictograms per circle: one pictogram means a plain pip.
+- A RING, RIM, BORDER or OUTLINE in a second colour is not a division. Many pips are drawn as a
+  coloured disc inside a pale ring; that is one plain pip.
+- A circle with a Phyrexian hook in it is {G/P} and not {G}. A circle with an ordinary tree, drop,
+  skull, flame or sun in it is a plain pip, whatever else is near it.
+
+Report what this crop shows and nothing else. You may recognise the card these symbols come from;
+that is not what is being asked, and a remembered cost is a wrong answer here. If the crop shows
+four circles, the answer has four symbols in it even when you believe the card has five. Nothing
+in this crop is anything but the symbols in front of you.
+
+If the crop contains no such circles at all, return an empty string."""
 
 
 def _overlap_share(inner, outer):

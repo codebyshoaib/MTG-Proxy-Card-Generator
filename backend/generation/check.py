@@ -33,7 +33,7 @@ from typing import NamedTuple
 
 from PIL import ImageStat
 
-from cards import compositor
+from cards import compositor, symbols
 
 
 class Problem(NamedTuple):
@@ -267,30 +267,108 @@ def _normalised(text):
     return " ".join(text.replace("{", "").replace("}", "").split()).casefold()
 
 
-def _expected(face):
+UNREADABLE = "{?}"
+"""What `panels.READ_PROMPT` writes for a drawn symbol it cannot name.
+
+A cost containing one is not a cost that failed to be transcribed — it is a cost with a symbol on
+it that is not a Magic symbol, which is the exact defect `symbols` exists to make impossible on the
+stamped path. It fails rather than being skipped.
+"""
+
+
+def _symbols(text):
+    """A mana cost reduced to an ordered tuple of comparable symbols.
+
+    NOT `_normalised`, and the two must never be confused: that one *strips* braces, which is right
+    for rules text — a card draws `{T}` as a tap symbol and a transcription may or may not put the
+    braces back — and exactly wrong here. Braces are what separate one symbol from the next, so
+    without them `{1}{1}` and `{11}` are the same string, and they are very different costs.
+
+    ORDERED, because order is meaning: `{2}{G}` is not `{G}{2}`. Scryfall's `mana_cost` is
+    canonically ordered, so comparing sequences is safe rather than merely convenient.
+
+    Hybrid and Phyrexian halves compare as a SET, so `{G/W}` and `{W/G}` agree. The card draws one
+    circle split in two and which half a reader calls first is not a property of the card. This is
+    also the pair of pips the model was measured drawing as two separate symbols, so the
+    distinction that matters is one-vs-two and not which order the halves came out in.
+    """
+    return tuple(
+        frozenset(part.strip().upper() for part in token.split("/")) if "/" in token
+        else token.strip().upper()
+        for token in symbols.TOKEN.findall(text or "")
+    )
+
+
+def _expected(face, cost_lettered=False):
     """(surface, what it must say, what to call it) for every surface the model lettered.
 
-    The mana cost is absent on purpose — it is stamped by `compositor._cost` from our own vendored
-    artwork and was never the model's to get wrong. See `prompts._lettering_block`.
+    THE MANA COST IS CONDITIONAL, and `cost_lettered` is the caller saying which side of Phase 3
+    this card was painted on. Left out, it is stamped by `compositor._cost` from our own vendored
+    artwork and was never the model's to get wrong — and grading a field we drew ourselves against
+    a transcription of our own drawing tests the read-back, not the card.
+
+    It is compared by `_symbols` rather than `_normalised`; `proofread` branches on the surface
+    name to do it, because the cost also needs its own problem code and its own wording.
     """
     tab = ""
     if face.get("power") is not None:
         tab = f"{face['power']}/{face['toughness']}"
     elif face.get("loyalty") is not None:
         tab = str(face["loyalty"])
-    return (
+    fields = [
         ("title_plate", face.get("name") or "", "the card's name"),
         ("type_strip", face.get("type_line") or "", "the type line"),
         ("rules_panel", face.get("oracle_text") or "", "the rules text"),
         ("tab", tab, "the power/toughness" if face.get("power") is not None else "the loyalty"),
-    )
+    ]
+    if cost_lettered:
+        # Right after the name, because that is where it sits on the card and because `proofread`
+        # reports in this order — a wrong cost matters as much as a wrong name.
+        fields.insert(1, ("cost", face.get("mana_cost") or "", "the mana cost"))
+    return tuple(fields)
 
 
 def _quote(text, limit=90):
     return repr(text if len(text) <= limit else text[: limit - 1] + "…")
 
 
-def proofread(face, read, only=None):
+def _cost_disagreement(blind, sighted):
+    """The two readings of the pips do not match, so neither is evidence. Or None.
+
+    TWO READERS, AND BOTH HAVE TO AGREE, because measured across two batches on the four costs the
+    model has ever missed, EITHER READER ALONE LET A WRONG COST THROUGH — and never the same one:
+
+        2026-08-20 batch 1   Niv-Mizzet, five pips painted     sighted said six    blind said five
+        2026-08-20 batch 3   Kitchen Finks, two plain pips     sighted said two    blind said hybrid
+
+    The whole-card reader fails by RECOGNISING the card and recalling its cost. The cropped reader
+    fails the other way: shown a definition of a hybrid pip and a circle with a pale ring around a
+    coloured middle, it finds the two colours the definition asks for. Different failure, different
+    direction, and requiring them to concur caught the bad card and passed the good ones 5 of 5 —
+    with no better perception than either reader had on its own.
+
+    A disagreement is not a diagnosis: we do not know which reader is wrong, only that the pips are
+    ambiguous enough that two readings of them differ. That IS the defect worth repainting, because
+    a cost a careful reader can misread is a cost a player can misread. So the wording asks for pips
+    that cannot be read two ways, rather than pretending to know what is on the card.
+    """
+    if UNREADABLE in blind or UNREADABLE in sighted:
+        return None  # `proofread` has a better message for an unnameable pip
+    if not sighted.strip() or not blind.strip():
+        return None  # absence is `text_missing`'s to report, not a disagreement
+    if _symbols(blind) == _symbols(sighted):
+        return None
+    return Problem(
+        "cost_wrong",
+        f"the mana cost cannot be read reliably: read on its own it says {_quote(blind)}, and read "
+        f"with the rest of the card it says {_quote(sighted)}. Draw each pip so it can only be read "
+        "one way — a SPLIT pip is one circle cut by a straight line with a different symbol on each "
+        "side of the line, and every other pip is ONE circle holding ONE symbol, with no second "
+        "colour, no contrasting ring and no rim around it",
+    )
+
+
+def proofread(face, read, only=None, cost_lettered=False, cost_printed=None):
     """Does this lettered card say what Scryfall says? Worst first, empty means it does.
 
     THE RULE THIS EXISTS FOR is the one `CLAUDE.md` says survived everything else: a card whose
@@ -311,31 +389,57 @@ def proofread(face, read, only=None):
     `only` limits which surfaces we authored by painting — the product hybrid (`name_lettered`)
     paints the name and stamps the rest, so only `title_plate` is graded as ours-to-match.
     Writing on a surface we stamp is `text_extra`: it will collide with Scryfall type.
+
+    `cost_printed` COMES FROM SOMEWHERE ELSE, and must, whenever `cost_lettered` is set: it is
+    `panels.cost_read`'s answer, taken from a crop of the pips with the card's name cropped away.
+    `read`'s own transcription of the cost is not admissible evidence, because that call sees the
+    name, recognises the card and reports the cost it remembers — it passed two wrong costs on
+    `packs/cost-hard.json` on 2026-08-20, one of them stored `ok`. See `panels.cost_read`. Every
+    other field is still graded from `read`, because words are read and only symbols are recalled.
     """
+    if cost_lettered and cost_printed is None:
+        # LOUD, because the quiet version of this mistake is the bug being fixed: falling back to
+        # `read`'s sighted transcription would restore the false pass and look like a working gate.
+        raise ValueError(
+            "proofread(cost_lettered=True) needs cost_printed from panels.cost_read — grading the "
+            "cost from the whole-card transcription is the defect this argument exists to close"
+        )
     problems = []
     patches = read.get("text") or []
     surfaces = {}
     for patch in patches:
         surfaces.setdefault(patch.get("where") or "other", []).append(patch.get("text") or "")
 
-    # No title plate is a structural fault before it is a text one: it is where the mana cost gets
-    # stamped, so the card ships with no cost at all rather than a wrong one.
+    # No title plate is a structural fault before it is a text one. WHY it matters depends on who
+    # draws the cost: on the stamped path the plate is where the cost goes, so the card would ship
+    # with no cost at all; when the model letters the cost it needs no plate of ours, and what is
+    # left is a card whose name has nothing to sit on. The wording follows, because it is handed
+    # verbatim to the repaint by `prompts._repaint_clause` and has to be true to be actionable.
     if not read.get("title"):
         problems.append(
             Problem(
                 "missing_title",
+                "no plate was painted across the top of the card — the card's name has no surface "
+                "to sit on" if cost_lettered else
                 "no plate was painted across the top of the card — the card's mana cost has "
                 "nowhere to be stamped and would ship missing entirely",
             )
         )
 
     graded = set()
-    fields = _expected(face)
+    fields = _expected(face, cost_lettered=cost_lettered)
     if only is not None:
         fields = tuple(field for field in fields if field[0] in only)
     for where, expected, what in fields:
         graded.add(where)
-        printed = " ".join(surfaces.get(where) or [])
+        # `graded` still gets "cost" either way, so a cost patch in the sighted transcription is
+        # never reported as `text_extra` on this path — it is the same drawing, read twice.
+        printed = cost_printed if where == "cost" else " ".join(surfaces.get(where) or [])
+        if where == "cost" and expected:
+            disagreement = _cost_disagreement(printed, " ".join(surfaces.get("cost") or []))
+            if disagreement:
+                problems.append(disagreement)
+                continue
         if not expected:
             # A surface the card has no text for, carrying text anyway: a sorcery with a P/T tab
             # lettered, a vanilla creature with a rules panel filled in. Invented, by definition.
@@ -355,6 +459,28 @@ def proofread(face, read, only=None):
                     f"{what} is not printed anywhere on the card. It must read {_quote(expected)}",
                 )
             )
+        elif where == "cost":
+            # SYMBOL BY SYMBOL, and its own code: `cost_wrong` is what `pipeline` looks for to
+            # decide whether to stop asking the model for the cost and stamp it instead. A
+            # `text_wrong` here would make that escalation grep the message text.
+            if UNREADABLE in printed:
+                problems.append(
+                    Problem(
+                        "cost_wrong",
+                        f"the mana cost is drawn with a symbol that is not a Magic symbol — it "
+                        f"reads {_quote(printed)} and must read {_quote(expected)}. Draw each pip "
+                        "as the real symbol it is, or the card is unusable",
+                    )
+                )
+            elif _symbols(printed) != _symbols(expected):
+                problems.append(
+                    Problem(
+                        "cost_wrong",
+                        f"the mana cost reads {_quote(printed)} and must read {_quote(expected)} "
+                        f"— {len(_symbols(expected))} symbol(s) in that exact order, no more and "
+                        "no fewer. A hybrid or Phyrexian pip is ONE split circle, not two",
+                    )
+                )
         elif _normalised(printed) != _normalised(expected):
             problems.append(
                 Problem(
@@ -418,22 +544,35 @@ def cost_collides(face, read):
     starts_at = title[2] - compositor.cost_width(face, title, name)
     if starts_at >= name[2] + COST_GAP:
         return None
+    # HOW MUCH SHORTER, and not merely "shorter": this string is handed verbatim to the repaint by
+    # `prompts._repaint_clause`. Two fractions rounded to 2dp can print as "runs to 0.36 and must
+    # start at 0.36", which is a true statement of a real collision that reads as no collision at
+    # all and tells the model nothing to do differently. Progenitus, 2026-08-20.
+    short_by = name[2] + COST_GAP - starts_at
     return Problem(
         "cost_no_room",
-        f"the name runs to {name[2]:.2f} across the card and the mana cost has to start at "
-        f"{starts_at:.2f} to fit the plate — the cost would be stamped on top of the name. Paint "
-        "the name shorter so it stops before the reserved end. That end is the same stone, wood "
-        "or metal as the rest of the name object — not a second box, not a pale cutout.",
+        f"the name runs to {name[2]:.2f} across the card and the mana cost needs the plate from "
+        f"{starts_at:.2f} rightwards — they overlap, and the cost would be stamped on top of the "
+        f"name. The name must END at least {short_by:.0%} of the card's width further left: paint "
+        "it smaller, or shorten the plate's lettered area, so the reserved end is clear. That end "
+        "is the same stone, wood or metal as the rest of the name object — not a second box, not "
+        "a pale cutout.",
     )
 
 
 def cost_off_rim(image, face, read):
-    """The inner face of the title plate is too short for this cost, or None.
+    """This cost has nowhere at all to be stamped, or None.
 
     CLIENT-PACK 2026-08-19: `_cost` shrank to the floor and stamped onto the bevel when
     `_plate_face_right` had treated the outer frame as face. `cost_collides` cannot see this —
     it only compares name-box to plate-box fractions, with no pixels. Graded on the BLANK,
     before the stamp, same as `obstructed`.
+
+    THE PLATE IS NO LONGER THE ONLY PLACE IT CAN GO, so this asks both. A cost the plate's well
+    will not take goes to `compositor.cost_row`, the medallion row below the plate, and a card
+    that gets its cost there is not a card to repaint — it is the placement 12 of the client's 19
+    favorites use. What is left to report is the case where neither will have it, which means the
+    type strip is jammed against the plate or the pips will not fit a whole card's width.
     """
     title = read.get("title")
     if not title or not (face.get("mana_cost") or "").strip():
@@ -442,11 +581,15 @@ def cost_off_rim(image, face, read):
     name = compositor._box(read["name"], image.size) if read.get("name") else None
     if compositor.cost_fits(image, face, box, name):
         return None
+    type_box = compositor._box(read["type"], image.size) if read.get("type") else None
+    if compositor.cost_row(image, face, box, type_box):
+        return None
     return Problem(
         "cost_no_room",
-        "the inner face of the title plate is too short for this mana cost — the last pip "
-        "would sit on the rim. Stop the name sooner so the reserved end of the name object "
-        "is the same material as the rest of it, empty of letters, not a second box.",
+        "this card's mana cost has nowhere to go: the inner face of the title plate is too short "
+        "for it and there is no clear band under the plate to put it on either. Paint the name "
+        "object WIDER and its lettering SHORTER, and leave clear scene between it and the narrow "
+        "type object below, so the cost has somewhere to sit.",
     )
 
 
@@ -757,6 +900,19 @@ def matted(card):
     a margin it refused to touch — deeper than `bleed.MAX_DEPTH`, or on three sides rather than
     four, where cropping would slide the art off centre. Either way the client circled this exact
     defect on 2026-08-13, so it is reported rather than shipped.
+
+    A BLACK surround is not a mat and does not come through here — see `bleed.BLACK`. It used to:
+    three of the client's nineteen favorites set an illustrated frame inside a flat black surround,
+    and every one of them measured 1.000 here and would have been repainted, on his own preferred
+    look, for as long as the gate stood. His surrounds are also 11-23% deep, past
+    `bleed.MAX_DEPTH`, so `trim` was already leaving them whole — the whole cost of the mistake
+    landed on this gate, as a paid repaint per card.
+
+    THE GAP THAT LEAVES, stated rather than discovered later: a card painted as a rounded object on
+    a flat BLACK ground is now invisible to both gates, because `bleed._rounded_card` only knows
+    the model's white paper. Nothing measured has looked like that — the two examples on record,
+    Sol Ring and Elesh Norn, both grounded in 50-60 grey and both still fail — but it is the shape
+    of the next defect if one comes.
     """
     from generation import bleed
 

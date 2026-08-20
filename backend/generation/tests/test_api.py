@@ -94,6 +94,17 @@ class GenerateTests(TestCase):
             # `job.options` is the only record of what produced a stored card.
             "lettered": True,
             "name_lettered": False,
+            # PHASE 1, and deliberately still off over the API. An archetype attaches the
+            # client's own reference cards, which are not ours to condition a customer's card on
+            # (`generation/exemplars.py`) — so it stays a CLI experiment until Milestone 2
+            # replaces them with an owned set. Recorded because `job.options` is the only record
+            # of what produced a stored card, and a card made with exemplars must say so.
+            "archetype": None,
+            "exemplar_count": None,
+            # PHASE 3, also off over the API until it is measured on the client's seven. Recorded
+            # for the same reason as the two above: a card whose cost the model drew and a card
+            # whose cost we stamped are different products, and the record has to say which.
+            "cost_lettered": False,
         })
 
     def test_custom_style_free_text_folds_into_the_style_field(self):

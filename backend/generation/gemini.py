@@ -86,11 +86,23 @@ def _call(parts):
             time.sleep(wait)
 
 
-def generate(prompt, reference=None):
+def generate(prompt, reference=None, exemplars=()):
     """PNG bytes for one prompt.
 
-    `reference` is image bytes — Scryfall's `art_crop` — attached ahead of the prompt so the
-    model reads the original artwork before the brief that modifies it.
+    THE ATTACHMENT ORDER IS A CONTRACT, not an implementation detail:
+
+        exemplar_1 ... exemplar_N,  reference,  prompt
+
+    `prompts.exemplar_full` refers to these images BY POSITION — "the first N images", "the last
+    image" — because a model told which image is which can act on it and a model left to guess
+    cannot. Reordering them here silently misdescribes them in the brief, which is a fault no
+    test downstream can see: the card comes back merely worse.
+
+    The two kinds of image are opposites and that is the whole point of separating them.
+    `reference` is Scryfall's `art_crop` and supplies WHO the subject is, with `prompts.REFERENCE`
+    forbidding anything about how it is drawn. `exemplars` are the client's own cards and supply
+    exactly that — frame construction, surface treatment, lettering — and nothing about subject
+    or colour. Passing an exemplar as the reference would take the subject from the wrong image.
 
     A response with no image raises, carrying the model's own `finish_reason`. There are two
     ways to get one and they are not the same failure: an empty part list is the transient
@@ -99,6 +111,9 @@ def generate(prompt, reference=None):
     Both cost a generation, so neither may pass as an empty file.
     """
     parts = []
+    # PNG: `prepare_exemplars` writes PNG, and mislabelling the mime type of an attached image
+    # is the kind of thing that works until the day it does not.
+    parts += [types.Part.from_bytes(data=image, mime_type="image/png") for image in exemplars]
     if reference:
         parts.append(types.Part.from_bytes(data=reference, mime_type="image/jpeg"))
     parts.append(prompt)

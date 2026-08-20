@@ -915,7 +915,12 @@ def compose(png, face, panels, include_flavor_text=False, lettered=False, name_l
         # title box's empty sky (live pack 2026-08-19). `_cost` then tightens it to the
         # painted ink, because the box itself still carries detector padding.
         name = _box(panels["name"], image.size) if panels.get("name") else None
-        _cost(image, face, _box(panels["title"], image.size), light, name)
+        # The TYPE box is passed for one reason: if the cost has to go on a medallion row under
+        # the plate, that row must not land on the type strip.
+        _cost(
+            image, face, _box(panels["title"], image.size), light, name,
+            type_box=_box(panels["type"], image.size) if panels.get("type") else None,
+        )
         if lettered:
             return image, False
 
@@ -1002,17 +1007,29 @@ CARD_ASPECT = 2400 / 1792
 
 
 def cost_width(face, box, name_box=None):
-    """How much of the CARD'S WIDTH this cost will take when stamped into `box`, in fractions.
+    """How NARROW this cost can be made and still be stamped into `box`, in fractions of card width.
 
     The same arithmetic `_cost` does in pixels, in the unit a caller holding only 0-1 boxes can
     use. `check.cost_collides` is that caller: the cost lands against the plate's right end and
     the only thing there to hit is the name the model lettered, and both arrive as fractions from
     `panels.read_back` with no image between them.
+
+    AT THE FLOOR, and not at the nominal pip size, because `_cost` shrinks the row before it gives
+    up: `while pip_px > floor and span + pad > well_w: pip_px -= 1`. Measured at nominal this
+    function answers a question the compositor never asks, and the two disagree on exactly the
+    marginal case — which a ten-pip cost always is. PROGENITUS, 2026-08-20: its ten pips stamped
+    correctly, clear of the name, and `cost_collides` had already called the card unsound for a
+    collision that did not happen. A false repaint is a spent credit.
+
+    So the contract is the widest the row is ALLOWED to be squeezed to. A name that clears this
+    still leaves `_cost` free to stamp bigger pips when there is room for them; a name that does
+    not clear it is one `_cost` would refuse outright, which is the fault worth reporting.
+    `compositor.cost_fits` measures the same floor in pixels, so the two gates now agree.
     """
     tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
     if not tokens:
         return 0.0
-    pip = _pip_frac(box)
+    pip = _pip_frac(box) * PIP_MIN_OF_TARGET
     n = len(tokens)
     return (n + max(0, n - 1) * PIP_GAP) * pip * CARD_ASPECT + COST_RIGHT_INSET
 
@@ -1436,12 +1453,108 @@ def _cost_well(image, box, name=None, plate=None):
     return wx0, top, right, bot
 
 
+# The medallion row, for a cost the title plate's own well will not take.
+#
+# WHY A SECOND PLACEMENT EXISTS AT ALL. `_cost` used to give up: it returns without stamping when
+# the row will not fit even at the pip floor, because stamping anyway smashed `{2}{G}{G}` into one
+# oval (LETTERED-OVERLAP v3). Correct, and it means the card ships with NO MANA COST — Birthing
+# Pod, `packs/cost-hard/`, 2026-08-20. A proxy with no cost is unplayable, which is worse than any
+# placement.
+#
+# The well is a negotiation for space inside a plate the MODEL sized, and it is a negotiation we
+# lose on every card with a long name or a lot of pips. The client's own examples do not hold it:
+# in 12 of his 19 the cost sits on its own medallions on a second row under the name, clear of the
+# title bar entirely. Below the plate there is a whole card's width and no name to hit, so the
+# collision cannot happen by construction rather than being measured away.
+COST_ROW_GAP = 0.012
+"""Air between the title plate's bottom edge and the top of the medallion row, as a share of card
+height. Enough to read as a separate object under the plate rather than as its lower rim."""
+COST_ROW_INSET = 0.055
+"""How far in from the card's right edge the row ends, as a share of card width. The plate's own
+right end is preferred when it is sane; this is the fallback and the cap, and it keeps the row
+inside the 92% the card is trimmed to."""
+
+
+def cost_row(image, face, plate, type_box=None):
+    """(x0, y0, x1, y1) for the medallion row under the title plate, or None if it cannot sit.
+
+    None means there is genuinely nowhere: the type strip is right beneath the plate, or the pips
+    will not fit a whole card's width at the floor. Both are repaints, and `check.cost_off_rim`
+    reports them — this function is what that gate asks so the two cannot disagree.
+    """
+    tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
+    if not tokens:
+        return None
+    n = len(tokens)
+    # SIZED OFF THE CARD, not off the plate's inner height, which is the whole point of moving:
+    # a cost squeezed by a shallow plate is what put Progenitus's ten pips in the right quarter.
+    target = max(1, round(_pip_frac((0, 0, 1, 1)) * image.height))
+    floor = max(16, round(target * PIP_MIN_OF_TARGET))
+
+    right = round(plate[2])
+    cap = round(image.width * (1 - COST_ROW_INSET))
+    if not (0 < right <= image.width):
+        right = cap
+    right = min(right, cap)
+
+    top = round(plate[3] + image.height * COST_ROW_GAP)
+    limit = round(type_box[1]) - round(image.height * COST_ROW_GAP) if type_box else image.height
+
+    def span(at):
+        return n * at + max(0, n - 1) * round(at * PIP_GAP)
+
+    pip_px = target
+    room = max(1, right - round(image.width * 0.04))
+    while pip_px > floor and (span(pip_px) > room or top + pip_px > limit):
+        pip_px -= 1
+    if span(pip_px) > room or top + pip_px > limit:
+        return None
+    return (right - span(pip_px), top, right, top + pip_px)
+
+
+def _cost_medallions(image, face, plate, type_box=None):
+    """The cost as its own row of medallions under the title plate. True if it landed.
+
+    A DROP SHADOW under each pip, which the plate placement does not need and this one cannot do
+    without: the well sits the pips on flat painted stone, and here they sit on artwork that may be
+    any value at all. A Scryfall pip is a finished circle with no outline of its own, so a white
+    sun on pale sky has nothing to separate it from the sky.
+    """
+    box = cost_row(image, face, plate, type_box)
+    if box is None:
+        return False
+    x0, y0, x1, y1 = box
+    pip_px = y1 - y0
+    layer, _ = _layer(box)
+    _draw_pips(layer, list(reversed(symbols.TOKEN.findall(face["mana_cost"]))), pip_px, x1 - x0,
+               pip_px)
+
+    offset = max(2, round(pip_px * 0.06))
+    shadow = Image.new("RGBA", (x1 - x0 + offset * 2, pip_px + offset * 2), (0, 0, 0, 0))
+    shadow.paste(
+        Image.new("RGBA", layer.size, (0, 0, 0, 150)), (offset * 2, offset * 2), layer
+    )
+    shadow = shadow.filter(ImageFilter.GaussianBlur(max(1, round(pip_px * 0.05))))
+    image.alpha_composite(shadow, (x0 - offset, y0 - offset))
+    # STRAIGHT ON, and NOT through `_paste_pips`, whose `_occlude` puts the surface's own
+    # foreground back over the pips. That is right on a plate — a vine painted across the plate
+    # should cross the cost the way it crosses the name. Here the "surface" is open artwork, so
+    # the mask is arbitrary scene detail and the result is fragments of picture pasted over the
+    # mana symbols, or not, depending on how busy the paint happens to be. These medallions are
+    # the topmost objects on the card, which is what they are on the client's own examples.
+    image.alpha_composite(layer, (x0, y0))
+    return True
+
+
 def cost_fits(image, face, box, name=None):
     """Whether this cost fits the plate's inner face at the size floor.
 
     CLIENT-PACK 2026-08-19: `_cost` used to shrink to the floor and stamp anyway, so a well
     that was really the outer frame still shipped pips on the rim. The gate in
     `check.cost_off_rim` reads this so a miss becomes a repaint, not a stamp.
+
+    NOT the whole question any more: a cost this returns False for goes to `cost_row` instead of
+    nowhere. `check.cost_off_rim` asks both.
     """
     tokens = symbols.TOKEN.findall(face.get("mana_cost") or "")
     if not tokens:
@@ -1471,7 +1584,7 @@ def _paste_pips(image, layer, box):
     _occlude(image, surface, layer, box)
 
 
-def _cost(image, face, box, light=(1, 1), name=None):
+def _cost(image, face, box, light=(1, 1), name=None, type_box=None):
     """The mana cost alone, for the mode where the model lettered everything else.
 
     WHY THIS IS THE ONE FIELD WE KEEP. Measured over 25 lettered generations the model took the
@@ -1510,7 +1623,12 @@ def _cost(image, face, box, light=(1, 1), name=None):
     # LETTERED-OVERLAP v3, Triumph of the Hordes: the floor still did not fit,
     # and stamping anyway stacked {2}{G}{G} into one oval. `cost_off_rim` already
     # fails the attempt; an empty well on a retry image is better than a smash.
+    #
+    # BUT NOT AN EMPTY CARD, which is what returning here used to mean on the last attempt —
+    # Birthing Pod shipped with no cost at all on 2026-08-20. The medallion row below the plate
+    # has a whole card's width and no name in it, so it takes the costs this well cannot.
     if span(pip_px) + pad(pip_px) > well_w:
+        _cost_medallions(image, face, box, type_box)
         return
     mid = (wy0 + wy1) / 2
     top = round(mid - pip_px / 2)

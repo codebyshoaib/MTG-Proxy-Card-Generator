@@ -20,7 +20,7 @@ from django.core.management.base import BaseCommand, CommandError
 from PIL import ImageDraw
 
 from cards import compositor
-from generation import panels, pipeline
+from generation import exemplars, panels, pipeline
 
 
 def _slug(name):
@@ -83,11 +83,31 @@ class Command(BaseCommand):
             "--composited", dest="composited", action="store_true",
             help="Paint blank furniture and stamp Scryfall's text including the name.",
         )
-        parser.set_defaults(lettered=False, name_lettered=False, composited=False)
+        parser.add_argument(
+            "--archetype", default=None, choices=sorted(exemplars.ARCHETYPES),
+            help="Frame archetype. Attaches the client's own reference cards to the request and "
+                 "uses the short exemplar brief instead of the prose one, which also turns the "
+                 "frame on. Without it, the measured control path runs unchanged.",
+        )
+        parser.add_argument(
+            "--exemplars", dest="exemplar_count", type=int, default=None,
+            help="How many reference cards to attach (default: all the archetype has). The knob "
+                 "for the 1-vs-2-vs-3 A/B.",
+        )
+        parser.add_argument(
+            "--cost-lettered", dest="cost_lettered", action="store_true",
+            help="Let the model draw the mana cost too, graded symbol by symbol against Scryfall. "
+                 "Nothing is stamped. A cost still wrong after every attempt is repainted once "
+                 "with the well reserved and stamped instead, so a wrong cost cannot ship.",
+        )
+        parser.set_defaults(
+            lettered=False, name_lettered=False, composited=False, cost_lettered=False,
+        )
 
     def handle(
         self, card, style, out, source, boxes, direction, palette, notes, flavor,
-        use_reference, attempts, borderless, lettered, composited, name_lettered, panel_boxes, **_,
+        use_reference, attempts, borderless, lettered, composited, name_lettered, panel_boxes,
+        archetype, exemplar_count, cost_lettered, **_,
     ):
         try:
             faces = pipeline.faces_of(card)
@@ -96,6 +116,11 @@ class Command(BaseCommand):
 
         if composited:
             lettered, name_lettered = False, False
+            # A composited card stamps every field including the cost, so `--composited
+            # --cost-lettered` is two contradictory requests. Refused rather than silently
+            # resolved: the option the user did not get is the one they were measuring.
+            if cost_lettered:
+                raise CommandError("--cost-lettered contradicts --composited: pick one")
         elif name_lettered:
             lettered, name_lettered = False, True
         else:
@@ -104,6 +129,7 @@ class Command(BaseCommand):
             art_style=style, art_direction=direction, color_palette=palette, custom_art_notes=notes,
             include_flavor_text=flavor, use_original_art_reference=use_reference,
             borderless=borderless, lettered=lettered, name_lettered=name_lettered,
+            archetype=archetype, exemplar_count=exemplar_count, cost_lettered=cost_lettered,
         )
         out.mkdir(parents=True, exist_ok=True)
         for face in faces:

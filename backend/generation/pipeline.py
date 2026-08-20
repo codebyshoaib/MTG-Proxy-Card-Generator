@@ -16,7 +16,7 @@ import requests
 from PIL import Image
 
 from cards import compositor, scryfall
-from generation import bleed, check, gemini, panels, prompts, refusals
+from generation import bleed, check, exemplars, gemini, panels, prompts, refusals
 
 
 class Rejected(ValueError):
@@ -28,7 +28,11 @@ class Rejected(ValueError):
 
 
 class Options(NamedTuple):
-    """The seven inputs, under the reference site's own names."""
+    """The user-facing inputs, under the reference site's own names where they share one.
+
+    The first seven are theirs and are accepted over the API. The rest are ours and are not —
+    see `lettered` below and `archetype` at the end.
+    """
 
     art_style: str | None = None
     art_direction: str | None = None
@@ -44,6 +48,31 @@ class Options(NamedTuple):
     # `--composited` stamps every field. `--name-lettered` is the failed hybrid (name only).
     lettered: bool = True
     name_lettered: bool = False
+    # PHASE 1. One of `generation.exemplars.ARCHETYPES`. Set it and the look comes from attached
+    # reference cards instead of from prose, which also turns the frame on — see
+    # `prompts.exemplar_full`. Unset is the measured control path, unchanged.
+    archetype: str | None = None
+    # How many reference cards to attach. `None` means every one the archetype has; the A/B that
+    # decides the number is Phase 1's, because more images cost tokens and may dilute.
+    exemplar_count: int | None = None
+    # PHASE 3. The model draws the mana cost too, and nothing is stamped.
+    #
+    # DO NOT TURN THIS ON YET, and the reason is not caution — it is a measurement. On
+    # `packs/cost-hard.json`, 2026-08-20, the gate behind it PASSED TWO WRONG COSTS: Kitchen
+    # Finks' hybrids drawn as two plain pips, and Niv-Mizzet's six pips drawn as five, the second
+    # stored `status: "ok"`. `panels.read_back` is blind to the expected string but not to the
+    # card's NAME, which is printed on the card it transcribes, so it recognises the card and
+    # reports the cost from memory. Cropping the name away flips both reads to what is actually
+    # painted. It reads words and recalls symbols.
+    #
+    # Nor does the escalation below save it: Progenitus escalated as designed and the fallback
+    # repaint came back `cost_no_room` twice, storing a card with NO cost at all — the reserved
+    # end cannot survive exemplars, which Phase 1 had already measured and this default ignored.
+    #
+    # Both fixes are known and written up in `PLAN-EXEMPLAR-PIVOT-2026-08-20.md`, Phase 3's result
+    # block. Until they are in, this flag ships wrong costs quietly, which is the one thing
+    # `CLAUDE.md` forbids.
+    cost_lettered: bool = False
 
 
 class Result(NamedTuple):
@@ -202,11 +231,15 @@ def creative_full(face, options=Options(), attempts=2, source=None, panel_boxes=
 
     attempt = 0
     corrections = []
+    # `painting` and not `options`, because the Phase 3 escalation below changes what we ask for
+    # mid-loop. `options` stays as the caller set it, so the job record says what was requested
+    # and `painting` says what the last attempt actually asked for.
+    painting = options
     while True:
         attempt += 1
         png = (
             source if source
-            else _paint(face, licensed, reference, options, note, corrections)
+            else _paint(face, licensed, reference, painting, note, corrections)
         )
 
         # Before anything measures this image: cut the margin the model painted around it. Done
@@ -217,9 +250,50 @@ def creative_full(face, options=Options(), attempts=2, source=None, panel_boxes=
             if depth:
                 note(f"trimmed a {depth:.1%} painted margin — the brief asked for full bleed")
 
-        if options.lettered:
-            card, detected, problems = _letter(png, face, options)
-            if not problems or source or attempt >= max(1, attempts):
+        if painting.lettered:
+            card, detected, problems = _letter(png, face, painting)
+            spent = attempt >= max(1, attempts)
+            # ESCALATION, Phase 3. The model has used every attempt and the cost is still wrong,
+            # and the 18-of-22 measurement says a further repaint reaches the same answer and
+            # bills for it: the four failures on record are systematic, not random — ten pips
+            # drawn as nine, six as five, hybrid drawn as two circles, Phyrexian drawn as plain.
+            #
+            # It has to be a REPAINT and not a stamp onto this image. Stamping our cost over a
+            # cost the model already drew leaves the card with two, because nothing can remove
+            # the drawn one — so the fallback asks for a card with the well reserved. That costs
+            # one generation, and it is the last one this face gets.
+            #
+            # AND IT DROPS THE EXEMPLARS WITH IT, which is not tidiness: the reserved end and the
+            # exemplars are mutually exclusive, and this loop shipped a Progenitus with NO COST AT
+            # ALL before they were separated. Every exemplar draws its cost into a full-width title
+            # plate, so "leave the right-hand 16% of the plate bare" contradicts all three images
+            # the model is looking at — measured as `cost_no_room` on three of seven in Phase 1,
+            # then twice more on the one card that reached this branch on 2026-08-20. The prose
+            # brief is where the reserved end was fitted and where `SIGNOFF-PIP-2026-08-19` graded
+            # that same card's ten pips clean. The card loses this batch's geometry; it gains a
+            # cost. A plainer frame beats a missing cost.
+            if problems and spent and painting.cost_lettered and any(
+                problem.code == "cost_wrong" for problem in problems
+            ):
+                note(
+                    "the mana cost came back wrong on every attempt — repainting once more with "
+                    "the cost reserved for our own symbol artwork, and without the exemplars, "
+                    "which draw a cost into a full-width plate and leave no room to reserve. A "
+                    "card with a plainer cost beats a card with a wrong one."
+                )
+                painting = painting._replace(
+                    cost_lettered=False, archetype=None, exemplar_count=None,
+                )
+                # The cost fault is DROPPED from the corrections, and every other one is kept.
+                # `_repaint_clause` hands these to the model verbatim, and "draw exactly six
+                # symbols" is no longer true of a brief that now asks it to leave the well empty —
+                # a correction that contradicts the brief it rides on is worse than none.
+                corrections = [
+                    problem.detail for problem in problems if problem.code != "cost_wrong"
+                ]
+                attempts = attempt + 1
+                continue
+            if not problems or source or spent:
                 return Result(card, problems, detected, None if source else png)
             corrections = [problem.detail for problem in problems]
             note(f"attempt {attempt}: " + "; ".join(corrections) + " — repainting")
@@ -299,6 +373,19 @@ def _letter(png, face, options):
     against Scryfall; `check.type_end_mark` grades the type line's set-symbol slot, which is a
     graphic and so invisible to a transcription. Together they are what `CLAUDE.md` requires of
     any mode where the AI writes game text: a card that drifted from Scryfall must not ship.
+
+    `options.cost_lettered` (Phase 3) takes that last field too, and then THE COMPOSITOR DOES NOT
+    RUN AT ALL: the model's own image is the finished card. Two gates go with it —
+    `check.cost_collides` and `check.cost_off_rim` both ask "is our stamp about to land somewhere
+    bad", and there is no stamp. They are not weakened, they are inapplicable, and they stay on
+    the stamped path where they belong. What replaces them is a stricter `proofread`, which now
+    grades the cost symbol by symbol.
+
+    That path costs a THIRD call, `panels.cost_read`, and it buys the only thing that makes the
+    stricter grade real: a reading of the pips taken with the card's name cropped out of frame.
+    Graded from the whole-card transcription instead, the gate passed two wrong costs on
+    `packs/cost-hard.json`. So `cost_lettered` is three calls, not two, and the mode is one cheap
+    vision call more expensive than a composited card rather than the same.
     """
     read = panels.read_back(png, face)
     # Only the title box is printed into. The rules boxes are read so `contrast` still has
@@ -306,15 +393,28 @@ def _letter(png, face, options):
     # cards before that gate existed, and the model choosing its own panel does not make it safe.
     detected = {key: read[key] for key in ("title", "name", "type", "rules") if read.get(key)}
     blank = Image.open(io.BytesIO(png)).convert("RGBA")
-    card, _ = compositor.compose(blank.copy(), face, detected, lettered=True)
 
-    problems = check.proofread(face, read)
-    # The one fault the read-back cannot see: it transcribes the card BEFORE the cost is stamped,
-    # so a cost about to land on the name passes every text check. Measured on the first live run.
-    problems += [problem for problem in [check.cost_collides(face, read)] if problem]
-    # CLIENT-PACK 2026-08-19: last pip on the carved rim. `cost_collides` is fractions of the
-    # detector box; this grades the inner face, on the blank, before the stamp.
-    problems += [problem for problem in [check.cost_off_rim(blank, face, read)] if problem]
+    problems = []
+    cost_printed = None
+    if options.cost_lettered:
+        card = blank.copy()
+        # A THIRD CALL, and only on this path. `read_back` saw the card's name and so its reading of
+        # the pips is worthless — see `panels.cost_read`. No box means no pips were painted at all,
+        # and "" is what makes `proofread` say the cost is missing rather than say nothing.
+        cost_printed = panels.cost_read(png, read["cost"]) if read.get("cost") else ""
+    else:
+        card, _ = compositor.compose(blank.copy(), face, detected, lettered=True)
+        # The one fault the read-back cannot see: it transcribes the card BEFORE the cost is
+        # stamped, so a cost about to land on the name passes every text check. Measured on the
+        # first live run.
+        problems += [problem for problem in [check.cost_collides(face, read)] if problem]
+        # CLIENT-PACK 2026-08-19: last pip on the carved rim. `cost_collides` is fractions of the
+        # detector box; this grades the inner face, on the blank, before the stamp.
+        problems += [problem for problem in [check.cost_off_rim(blank, face, read)] if problem]
+
+    problems = check.proofread(
+        face, read, cost_lettered=options.cost_lettered, cost_printed=cost_printed,
+    ) + problems
     # SIGNOFF 2026-08-19, Elesh Norn: a red Phyrexian phi in the set-symbol slot. The type line
     # transcribed correctly, so `proofread` had nothing to say — the mark is not words. Graded
     # on the finished card, on the pixels of the type strip the read-back located.
@@ -366,6 +466,14 @@ def _paint(face, licensed, reference, options, note, corrections=()):
     gallery agrees — its Raphael, Gimli, Sephiroth and Y'shtola are all named and all at full
     likeness, and in 3265 cards it holds no Marvel card at all.
     """
+    # Loaded ONCE, outside the refusal retry below: the same archetype attaches the same images in
+    # the same order however many times the brief is rebuilt. `exemplars.load` raises rather than
+    # returning nothing when the assets are absent, so a clean clone fails loudly instead of
+    # quietly generating an unconditioned card that scores badly for an invisible reason.
+    attached = (
+        exemplars.load(options.archetype, options.exemplar_count) if options.archetype else []
+    )
+
     def brief(as_identity):
         return prompts.creative_full(
             face, options.art_style, reference=bool(reference), licensed=as_identity,
@@ -373,11 +481,13 @@ def _paint(face, licensed, reference, options, note, corrections=()):
             notes=options.custom_art_notes, borderless=options.borderless,
             corrections=corrections, lettered=options.lettered,
             name_lettered=options.name_lettered,
+            archetype=options.archetype, exemplars=len(attached),
+            cost_lettered=options.cost_lettered,
         )
 
     if not (licensed and refusals.is_refused(face["name"])):
         try:
-            return gemini.generate(brief(False), reference)
+            return gemini.generate(brief(False), reference, exemplars=attached)
         except gemini.NoImage as refusal:
             # A refusal repeats for this prompt forever, so the only useful response is a
             # different prompt. A transient miss is neither remembered nor retried here: it costs
@@ -390,4 +500,4 @@ def _paint(face, licensed, reference, options, note, corrections=()):
                 "repainting from the card's game identity instead. Remembered, so this is "
                 "paid once."
             )
-    return gemini.generate(brief(True), reference)
+    return gemini.generate(brief(True), reference, exemplars=attached)

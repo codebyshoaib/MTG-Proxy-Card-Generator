@@ -7,6 +7,7 @@ that each was caught only because a human happened to be looking at the output.
 from django.test import SimpleTestCase
 from PIL import Image, ImageDraw
 
+from cards import compositor
 from generation import bleed, check, panels as panels_module
 
 CREATURE = {"power": "5", "toughness": "4", "oracle_text": "Trample"}
@@ -676,6 +677,31 @@ class CostCollisionTests(SimpleTestCase):
         """Same rule as `panels._usable`: an absent box means the reader was unsure, and inventing
         one here would fail good cards on arithmetic nobody measured."""
         self.assertIsNone(check.cost_collides(self.PROGENITUS, {"title": self.PLATE}))
+
+    def test_the_ten_pips_that_actually_fitted_are_not_called_a_collision(self):
+        """PROGENITUS AGAIN, and the other way round — `packs/cost-hard/progenitus-panels.json`,
+        2026-08-20, the read-back's own boxes. The card came back with all ten pips stamped
+        correctly and clear of the name, and this gate called it unsound anyway, because it
+        measured `cost_width` at nominal pip size while `compositor._cost` shrinks the row first.
+        A false repaint is a spent credit, so the two now measure the same floor.
+        """
+        read = {"title": (0.068, 0.036, 0.933, 0.137), "name": (0.118, 0.073, 0.362, 0.109)}
+        self.assertIsNone(check.cost_collides(self.PROGENITUS, read))
+
+    def test_a_near_miss_says_how_much_shorter_the_name_has_to_be(self):
+        """PROGENITUS, 2026-08-20. The old wording printed both fractions to 2dp, so a real
+        collision came out as "runs to 0.36 and has to start at 0.36" — true, and unactionable.
+        This string goes straight to the repaint, so it has to name the distance to move.
+        """
+        # Contrived so the two land within COST_GAP of each other and both round to the same 2dp.
+        cost = compositor.cost_width(self.PROGENITUS, self.PLATE, None)
+        starts_at = self.PLATE[2] - cost
+        read = {"title": self.PLATE, "name": (0.10, 0.07, starts_at + 0.002, 0.13)}
+        problem = check.cost_collides(self.PROGENITUS, read)
+        self.assertEqual("cost_no_room", problem.code)
+        self.assertIn("they overlap", problem.detail)
+        self.assertIn("further left", problem.detail)
+        self.assertNotIn("0%", problem.detail)  # a distance of "0%" is no instruction at all
 
 
 class CostOffRimTests(SimpleTestCase):

@@ -1229,25 +1229,101 @@ class NameLetteredComposeTests(SimpleTestCase):
         self.assertGreater(min(changed_x), 720, f"pips ran into the name: x={min(changed_x)}")
         self.assertLess(max(changed_x), 1450, f"pips sat in the painted slot: x={max(changed_x)}")
 
-    def test_a_well_too_short_is_not_smash_stamped(self):
-        """LETTERED-OVERLAP v3, Triumph of the Hordes. Name ran to 0.78, well
-        started at 0.73, `{2}{G}{G}` still shrank to the floor and stamped
-        overlapping ovals. No room means no stamp — `cost_off_rim` already
-        forces the repaint."""
+    def _crowded_plate(self):
+        """LETTERED-OVERLAP v3's card: name to 0.88 of a plate whose well starts at 0.73."""
         before = card((210, 205, 200))
         draw = ImageDraw.Draw(before)
         draw.rectangle((80, 120, 1710, 280), fill=(42, 44, 48, 255))
         draw.rectangle((110, 150, 1580, 250), fill=(198, 152, 64, 255))
         title = (80 / 1792, 120 / 2400, 1710 / 1792, 280 / 2400)
         name = (110 / 1792, 150 / 2400, 1580 / 1792, 250 / 2400)
-        face = {**FACE, "mana_cost": "{2}{G}{G}"}
+        return before, title, name, {**FACE, "mana_cost": "{2}{G}{G}"}
+
+    def test_a_well_too_short_is_not_smash_stamped(self):
+        """LETTERED-OVERLAP v3, Triumph of the Hordes. Name ran to 0.88, the well started at
+        0.73, and `{2}{G}{G}` still shrank to the floor and stamped overlapping ovals. Nothing
+        may land inside the plate here — the smash is the defect.
+        """
+        before, title, name, face = self._crowded_plate()
         title_px = compositor._box(title, before.size)
         name_px = compositor._box(name, before.size)
         self.assertFalse(compositor.cost_fits(before, face, title_px, name_px))
         after = compositor.compose(
             before.copy(), face, {"title": title, "name": name}, lettered=True,
         )[0]
-        self.assertEqual(before.tobytes(), after.tobytes())
+        plate = (80, 120, 1710, 280)
+        self.assertEqual(before.crop(plate).tobytes(), after.crop(plate).tobytes())
+
+    def test_a_well_too_short_puts_the_cost_on_a_medallion_row_instead(self):
+        """BIRTHING POD, `packs/cost-hard/`, 2026-08-20: the old contract was "no room means no
+        stamp", and on the last attempt that shipped a card with NO MANA COST. Unplayable beats
+        any placement, so the cost goes below the plate — where 12 of the client's 19 put it.
+        """
+        before, title, name, face = self._crowded_plate()
+        after = compositor.compose(
+            before.copy(), face, {"title": title, "name": name}, lettered=True,
+        )[0]
+        changed = [
+            (x, y)
+            for x in range(0, 1792, 4) for y in range(0, 1200, 4)
+            if before.getpixel((x, y)) != after.getpixel((x, y))
+        ]
+        self.assertTrue(changed, "the cost was not stamped anywhere at all")
+        self.assertGreater(min(y for _x, y in changed), 280, "pips landed on or above the plate")
+        self.assertLess(max(y for _x, y in changed), 480, "pips drifted down into the artwork")
+
+    def test_the_medallion_row_keeps_clear_of_the_type_strip(self):
+        """The row's whole advantage is empty space below the plate. Where a card has none, it
+        must decline rather than print the cost over the type line."""
+        before, title, name, face = self._crowded_plate()
+        plate = compositor._box(title, before.size)
+        self.assertIsNone(
+            compositor.cost_row(before, face, plate, type_box=(0, 300, 1700, 360))
+        )
+        self.assertIsNotNone(
+            compositor.cost_row(before, face, plate, type_box=(0, 1200, 1700, 1260))
+        )
+
+    def test_the_medallions_are_not_occluded_by_the_artwork_they_sit_on(self):
+        """`_paste_pips` puts a surface's own foreground back over the pips, which is right on a
+        plate — a painted vine should cross the cost. On open artwork the mask is arbitrary scene
+        detail, so the pips would come back with fragments of picture over them, or not, depending
+        on how busy the paint is. Asserted on deliberately busy art.
+        """
+        busy = card((210, 205, 200))
+        draw = ImageDraw.Draw(busy)
+        for x in range(0, 1792, 12):
+            draw.line((x, 300, x + 40, 700), fill=(20, 90, 30, 255), width=5)
+        draw.rectangle((80, 120, 1710, 280), fill=(42, 44, 48, 255))
+        _before, title, name, face = self._crowded_plate()
+        after = compositor.compose(
+            busy.copy(), face, {"title": title, "name": name}, lettered=True,
+        )[0]
+        x0, y0, x1, y1 = compositor.cost_row(busy, face, compositor._box(title, busy.size))
+        pip_px = y1 - y0
+        gap = round(pip_px * compositor.PIP_GAP)
+        # INSIDE THE DISCS, not across the whole row: the row's width includes the gaps between
+        # pips, and artwork showing through a gap is the scene doing exactly what it should.
+        radius = round(pip_px * 0.3)
+        for index in range(3):
+            centre_x = x1 - index * (pip_px + gap) - pip_px // 2
+            centre_y = y0 + pip_px // 2
+            patch = after.crop((centre_x - radius, centre_y - radius,
+                                centre_x + radius, centre_y + radius))
+            hatch = sum(
+                1 for x in range(patch.width) for y in range(patch.height)
+                if patch.getpixel((x, y))[:3] == (20, 90, 30)
+            )
+            self.assertEqual(0, hatch, f"scene detail was pasted over pip {index}")
+
+    def test_a_cost_that_will_not_fit_a_whole_card_width_declines(self):
+        """Ten pips under a plate that ends at 40% of the card have nowhere to go either, and
+        `check.cost_off_rim` is what turns that into a repaint."""
+        before, title, _name, _face = self._crowded_plate()
+        plate = compositor._box(title, before.size)
+        narrow = (plate[0], plate[1], round(1792 * 0.30), plate[3])
+        ten = {**FACE, "mana_cost": "{W}{W}{U}{U}{B}{B}{R}{R}{G}{G}"}
+        self.assertIsNone(compositor.cost_row(before, ten, narrow))
 
     def test_a_card_with_no_cost_is_left_untouched(self):
         before = self.blank()
