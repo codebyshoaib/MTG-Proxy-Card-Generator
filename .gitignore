@@ -13,3 +13,7 @@ art-out/
 # handed to the client at Milestone 3.
 cards-cache/
 docs/
+# What a batch PRODUCED. 10MB a card, and two batches already outweigh the whole repo. The spec
+# beside them — backend/packs/*.json — IS tracked, and it plus `manage.py pack` reproduces the
+# batch, which is the point of the spec being a committed file.
+backend/packs/*/
