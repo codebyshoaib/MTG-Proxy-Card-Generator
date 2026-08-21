@@ -492,6 +492,6 @@ class Escalation(SimpleTestCase):
              mock.patch.object(pipeline.bleed, "trim", side_effect=lambda png: (png, 0.0)), \
              mock.patch.object(pipeline, "_letter", side_effect=letter):
             pipeline.creative_full(
-                TOSKI, pipeline.Options(lettered=True), attempts=2, note=lambda _m: None,
+                TOSKI, pipeline.Options(lettered=True, archetype=None, exemplar_count=None, cost_lettered=False), attempts=2, note=lambda _m: None,
             )
         self.assertEqual([False, False], calls)

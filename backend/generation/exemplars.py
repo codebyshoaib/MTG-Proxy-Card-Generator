@@ -90,7 +90,9 @@ def available():
     return {
         directory.name
         for directory in ROOT.iterdir()
-        if directory.is_dir() and any(directory.glob("*.png"))
+        if directory.is_dir()
+        and directory.name in ARCHETYPES
+        and any(directory.glob("*.png"))
     }
 
 

@@ -119,6 +119,8 @@ def _options(body, lettered=True, name_lettered=False):
     """The seven inputs out of an untrusted body, or `ValueError`.
 
     `lettered` and `name_lettered` are ours, set from the mode, never from the body.
+    Creative Full defaults match `packs/client-feedback-mural.json`: mural exemplars and a
+    model-drawn cost — the recipe that answered the client's 2026-08-20 feedback.
     """
     text = {}
     for field in ("art_style", "art_direction", "color_palette", "custom_art_notes"):
@@ -142,6 +144,10 @@ def _options(body, lettered=True, name_lettered=False):
         borderless=bool(body.get("borderless", True)),
         lettered=lettered,
         name_lettered=name_lettered,
+        # Product defaults — not payload fields on the reference site, so not accepted from body.
+        cost_lettered=True,
+        archetype="mural",
+        exemplar_count=3,
     )
 
 

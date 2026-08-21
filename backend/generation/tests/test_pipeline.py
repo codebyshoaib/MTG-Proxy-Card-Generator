@@ -159,7 +159,11 @@ class NamedFirstTests(SimpleTestCase):
                 mock.patch.object(
                     pipeline.refusals, "is_refused", return_value=refused_already), \
                 mock.patch.object(pipeline.refusals, "remember") as remember:
-            painted = pipeline._paint(FACE, True, None, pipeline.Options(), lambda _: None)
+            painted = pipeline._paint(
+                FACE, True, None,
+                pipeline.Options(archetype=None, exemplar_count=None, cost_lettered=False),
+                lambda _: None,
+            )
         return brief, remember, painted
 
     def test_the_name_is_tried_first_and_the_identity_only_after_a_refusal(self):
@@ -251,8 +255,12 @@ class LetteredTests(SimpleTestCase):
     Two things have to hold or the mode must not ship. It costs the SAME two calls a composited
     card does — `read_back` replaces `detect`, it does not join it — and `proofread` runs, because
     `CLAUDE.md`'s surviving rule is that a card whose printed text differs from Scryfall must never
-    ship silently. `Options()` is this path.
+    ship silently. Explicit `archetype=None` here — the default mural path needs exemplar files
+    on disk; these unit tests are the prose/lettered control without them.
     """
+
+    # Prose control path: no exemplars, stamped cost. Product defaults are mural+cost_lettered.
+    OPTIONS = pipeline.Options(archetype=None, exemplar_count=None, cost_lettered=False)
 
     READ = {
         "title": (0.05, 0.03, 0.95, 0.11),
@@ -272,7 +280,7 @@ class LetteredTests(SimpleTestCase):
                 mock.patch.object(pipeline.check, "colour_identity", return_value=None), \
                 mock.patch.object(pipeline.check, "matted", return_value=None), \
                 mock.patch.object(pipeline.gemini, "generate", return_value=_jpeg()) as generate:
-            result = pipeline.creative_full(FACE, pipeline.Options(), **kwargs)
+            result = pipeline.creative_full(FACE, self.OPTIONS, **kwargs)
         return generate, read, detect, grade, brief, result
 
     def test_it_reads_the_card_back_instead_of_detecting_blanks(self):

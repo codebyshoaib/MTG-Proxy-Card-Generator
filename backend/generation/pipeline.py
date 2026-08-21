@@ -48,31 +48,18 @@ class Options(NamedTuple):
     # `--composited` stamps every field. `--name-lettered` is the failed hybrid (name only).
     lettered: bool = True
     name_lettered: bool = False
-    # PHASE 1. One of `generation.exemplars.ARCHETYPES`. Set it and the look comes from attached
-    # reference cards instead of from prose, which also turns the frame on — see
-    # `prompts.exemplar_full`. Unset is the measured control path, unchanged.
-    archetype: str | None = None
-    # How many reference cards to attach. `None` means every one the archetype has; the A/B that
-    # decides the number is Phase 1's, because more images cost tokens and may dilute.
-    exemplar_count: int | None = None
-    # PHASE 3. The model draws the mana cost too, and nothing is stamped.
-    #
-    # DO NOT TURN THIS ON YET, and the reason is not caution — it is a measurement. On
-    # `packs/cost-hard.json`, 2026-08-20, the gate behind it PASSED TWO WRONG COSTS: Kitchen
-    # Finks' hybrids drawn as two plain pips, and Niv-Mizzet's six pips drawn as five, the second
-    # stored `status: "ok"`. `panels.read_back` is blind to the expected string but not to the
-    # card's NAME, which is printed on the card it transcribes, so it recognises the card and
-    # reports the cost from memory. Cropping the name away flips both reads to what is actually
-    # painted. It reads words and recalls symbols.
-    #
-    # Nor does the escalation below save it: Progenitus escalated as designed and the fallback
-    # repaint came back `cost_no_room` twice, storing a card with NO cost at all — the reserved
-    # end cannot survive exemplars, which Phase 1 had already measured and this default ignored.
-    #
-    # Both fixes are known and written up in `PLAN-EXEMPLAR-PIVOT-2026-08-20.md`, Phase 3's result
-    # block. Until they are in, this flag ships wrong costs quietly, which is the one thing
-    # `CLAUDE.md` forbids.
-    cost_lettered: bool = False
+    # PHASE 1. One of `generation.exemplars.ARCHETYPES`. Product default is `mural` — the
+    # recipe that cleared the client's 2026-08-20 feedback pack (`packs/client-feedback-mural.json`).
+    # Unset (`None`) is the measured prose-only control path for CLI experiments.
+    archetype: str | None = "mural"
+    # How many reference cards to attach. `None` means every one the archetype has.
+    # Three matched the mural sign-off pack.
+    exemplar_count: int | None = 3
+    # PHASE 3. The model draws the mana cost too. Product default is ON — same mural pack:
+    # stamped costs were the last pasted-on element inside exemplar frames, and `cost_no_room`
+    # fell from 3/7 to 0/7 when the model lettered them. The double-read gate in `check.proofread`
+    # (`cost_printed` vs crop) is what stops a wrong cost shipping quietly.
+    cost_lettered: bool = True
 
 
 class Result(NamedTuple):
