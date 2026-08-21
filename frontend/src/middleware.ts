@@ -34,5 +34,7 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // Let Next serve its own assets and the runtime API/media proxies without double-gating
+  // static files. /api and /media still hit this middleware first (same basic auth as pages).
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
