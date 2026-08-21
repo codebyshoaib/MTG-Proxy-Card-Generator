@@ -1,17 +1,13 @@
-import { DownloadIcon, StatusPill } from "@/components/ui";
+import { DownloadIcon } from "@/components/ui";
 import type { CardResult } from "@/lib/types";
 import { duration } from "./JobProgress";
 
-const TONE = {
-  ok: { tone: "positive", label: "Sound" },
-  unsound: { tone: "warning", label: "Unsound" },
-  failed: { tone: "negative", label: "Failed" },
-} as const;
-
-/** One finished face: the card, what is wrong with it if anything, and a way to get it out. */
+/** One finished face: the card and a way to get it out.
+ *
+ * Grading (Sound/Unsound + problem codes) is hidden for the Milestone 1 demo UI — the checks
+ * still run on the backend and stay in the job payload; we just do not surface them here yet.
+ */
 export function ResultCard({ result }: Readonly<{ result: CardResult }>) {
-  const status = TONE[result.status];
-
   return (
     <figure className="flex flex-col gap-3">
       {result.image ? (
@@ -30,20 +26,17 @@ export function ResultCard({ result }: Readonly<{ result: CardResult }>) {
       )}
 
       <figcaption className="flex flex-col gap-2">
-        <span className="flex items-start justify-between gap-3">
-          <span className="text-sm font-medium">
-            {result.quantity > 1 && <span className="text-ink-soft">{result.quantity}× </span>}
-            {result.name}
-            {result.seconds !== undefined && (
-              <span className="ml-2 text-xs font-normal text-ink-soft">
-                {duration(result.seconds)}
-              </span>
-            )}
-          </span>
-          <StatusPill tone={status.tone}>{status.label}</StatusPill>
+        <span className="text-sm font-medium">
+          {result.quantity > 1 && <span className="text-ink-soft">{result.quantity}× </span>}
+          {result.name}
+          {result.seconds !== undefined && (
+            <span className="ml-2 text-xs font-normal text-ink-soft">
+              {duration(result.seconds)}
+            </span>
+          )}
         </span>
 
-        {result.problems.length > 0 && (
+        {result.status === "failed" && result.problems.length > 0 && (
           <ul className="flex flex-col gap-1">
             {result.problems.map((problem) => (
               <li key={problem.code} className="text-xs text-ink-soft">
