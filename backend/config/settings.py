@@ -101,6 +101,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+# The API is gated by DemoBasicAuthMiddleware (shared demo password), not Django users.
+# DRF's default BasicAuthentication would otherwise treat Authorization: Basic demo:… as a
+# User login and return "Invalid username/password." on every generate call.
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',
+    ],
+}
+
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases

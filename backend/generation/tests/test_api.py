@@ -66,6 +66,24 @@ class GenerateTests(TestCase):
         self.assertEqual(job.cards[0]["quantity"], 4)
         start.assert_called_once()
 
+    def test_basic_authorization_is_not_read_as_a_django_user(self):
+        """The demo gate uses Authorization: Basic. DRF must not treat it as User auth —
+        that shipped 'Invalid username/password.' on every Generate click on Render."""
+        import base64
+
+        token = base64.b64encode(b"demo:not-a-real-django-user").decode()
+        with mock.patch(
+            "generation.views.scryfall.resolve_decklist", return_value=_plan()
+        ), mock.patch("generation.views.jobs.start"):
+            response = self.client.post(
+                "/api/generate/",
+                {"decklist": "Lightning Bolt"},
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Basic {token}",
+            )
+        self.assertEqual(response.status_code, 202, response.content)
+        self.assertNotIn("Invalid username/password", response.content.decode())
+
     def test_the_seven_options_arrive_under_their_own_names(self):
         """Their payload field names survive from the select element to the brief — no mapping
         table means nothing to keep in sync (STATUS 2026-08-11)."""
