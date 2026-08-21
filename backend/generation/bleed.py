@@ -83,6 +83,29 @@ ONE KNOWN CARD SITS ABOVE THIS AND IS NOT OURS: tcggenerator.com's Snow-Covered 
 looked like it. If a real card of ours lands there, this constant is the first thing to re-fit.
 """
 
+BLACK_INSET = 0.047
+"""Deepest black void on ALL FOUR sides, as a share of the shorter side, before the card is an
+inset object on a page rather than a full-bleed face.
+
+`BLACK` above stands `matted_share` down on a black RING so Avacyn-style surrounds survive. That
+left a gap `check.matted` already named: a card painted as an object on flat BLACK ground is
+invisible to both gates. Tower Winder oneshot 2026-08-20 is that gap — vine frame floating in a
+black void, min black margin 0.055 of the short side, `matted_share` 0.000.
+
+MEASURED 2026-08-20, min-of-four black margin depth (max channel <= BLACK, 90% of the edge line):
+
+    rejected   Tower Winder oneshot     0.055
+    accepted   Hullbreaker (his)        0.039
+               Avacyn (his)             0.028
+               Howling Mine (his)       0.025
+               Brainstealer (his)       0.021
+               the other 15 favorites   0.000
+
+0.047 sits in the 0.039–0.055 gap. All 19 of his favorites clear it; the oneshot does not.
+`trim` now CROPS a black void under `MAX_DEPTH` (same surgery as a cream mat) and scales back
+to canvas — so the grade here is for voids too deep to cut without eating the frame.
+"""
+
 TOLERANCE = 26
 """How far a pixel may sit from the mat's own colour and still count as part of it."""
 
@@ -201,6 +224,38 @@ def matted_share(image):
     # measured are cream (#f4efe3), not #ffffff.
     colour = tuple(sorted(channel)[len(channel) // 2] for channel in zip(*light))
     return sum(1 for p in ring if _near(p, colour)) / len(ring)
+
+
+def black_inset_depth(image):
+    """Min black margin across the four sides, as a share of the shorter side.
+
+    Walks inward from each edge until a line is no longer >=90% black (`BLACK`). The MINIMUM of
+    the four is what decides: a single side that bleeds to the trim is enough to clear a designed
+    dark rim, and an inset card object puts void on every side.
+    """
+    return min(_black_side_depths(image)) / min(image.size)
+
+
+def _black_side_depths(image):
+    """(top, bottom, left, right) black-margin depths in pixels — see `black_inset_depth`."""
+    width, height = image.size
+    pixels = image.load()
+    limit = int(min(width, height) * 0.30)
+    step = max(1, width // 40)
+
+    def side(axis, forward):
+        span, across = (height, width) if axis == "y" else (width, height)
+        for offset in range(limit):
+            index = offset if forward else span - 1 - offset
+            line = [
+                pixels[position, index] if axis == "y" else pixels[index, position]
+                for position in range(0, across, step)
+            ]
+            if sum(1 for pixel in line if max(pixel) <= BLACK) / len(line) < 0.90:
+                return offset
+        return limit
+
+    return side("y", True), side("y", False), side("x", True), side("x", False)
 
 
 def _depth(image, colour, axis, forward):
@@ -376,6 +431,25 @@ def trim(png):
     """
     image = Image.open(io.BytesIO(png)).convert("RGB")
     if matted_share(image) < MATTED:
+        # BLACK VOID, same surgery as a cream mat. Phase 4 stood the SHARE gate down on black so
+        # Avacyn-style surrounds were not REPAINTED; that left Tower Winder shipping as a card
+        # object on a black page because nothing CROPPED the void either. 2026-08-20: cut it.
+        # Past MAX_DEPTH the void is the picture — leave it for `check.matted`.
+        top, bottom, left, right = _black_side_depths(image)
+        # Ignore 1px antialias dust; require every side to carry real void.
+        floor = max(2, int(min(image.size) * 0.005))
+        if (
+            top >= floor and bottom >= floor and left >= floor and right >= floor
+            and max(top, bottom, left, right) < int(min(image.size) * MAX_DEPTH)
+        ):
+            width, height = image.size
+            cropped = image.crop((left, top, width - right, height - bottom)).resize(
+                (width, height), Image.LANCZOS
+            )
+            out = io.BytesIO()
+            cropped.save(out, format="PNG")
+            return out.getvalue(), max(top, bottom, left, right) / min(width, height)
+
         # No mat, but the corners may still be the model's own rounded card standing on white.
         # Cut evenly on all four sides: the arc is symmetric by construction, and an even cut is
         # the one that cannot slide the art off centre.

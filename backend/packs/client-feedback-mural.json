@@ -1,0 +1,19 @@
+{
+  "why": "Client feedback cards under mural recipe, conditioned on his favorite sheet (5 (1).png) Tower Winder look: Craterhoof pose, Raphael name+cost, and Tower Winder itself.",
+  "bead": "mtg-kyo",
+  "art_style": "comic_book",
+  "art_direction": "dynamic",
+  "color_palette": "vibrant",
+  "lettered": true,
+  "cost_lettered": true,
+  "archetype": "mural",
+  "exemplar_count": 3,
+  "use_original_art_reference": true,
+  "borderless": true,
+  "include_flavor_text": false,
+  "cards": [
+    "Craterhoof Behemoth",
+    "Raphael, Tough Turtle",
+    "Tower Winder"
+  ]
+}

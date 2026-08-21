@@ -1,0 +1,30 @@
+{
+  "why": "Client favorites under the mural recipe that looked good on Tower Winder: comic_book/dynamic/vibrant, mural x3, cost_lettered. Named Scryfall cards only — mural sheet files 1-A/1-B/5-A/5-B are not single-card names.",
+  "bead": "mtg-kyo",
+  "art_style": "comic_book",
+  "art_direction": "dynamic",
+  "color_palette": "vibrant",
+  "lettered": true,
+  "cost_lettered": true,
+  "archetype": "mural",
+  "exemplar_count": 3,
+  "use_original_art_reference": true,
+  "borderless": true,
+  "include_flavor_text": false,
+  "cards": [
+    "Avacyn, Angel of Hope",
+    "Giada, Font of Hope",
+    "Lyra Dawnbringer",
+    "Arcane Signet",
+    "Howling Mine",
+    "Memory Jar",
+    "Counterspell",
+    "Hullbreaker Horror",
+    "Force of Will",
+    "Brainstealer Dragon",
+    "Cyclonic Rift",
+    "Command Tower",
+    "Aurelia, the Warleader",
+    "Kaalia of the Vast"
+  ]
+}

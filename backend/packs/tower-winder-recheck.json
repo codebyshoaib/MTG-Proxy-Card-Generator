@@ -1,0 +1,15 @@
+{
+  "why": "Recheck Tower Winder after full-bleed brief fix + black-inset matted gate. Same card as the bad oneshot.",
+  "bead": "mtg-kyo",
+  "art_style": "dark_fantasy",
+  "art_direction": "dynamic",
+  "color_palette": "vibrant",
+  "lettered": true,
+  "cost_lettered": true,
+  "archetype": "tangle",
+  "exemplar_count": 3,
+  "use_original_art_reference": true,
+  "borderless": true,
+  "include_flavor_text": false,
+  "cards": ["Tower Winder"]
+}

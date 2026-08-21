@@ -240,28 +240,41 @@ class BlackSurroundTests(SimpleTestCase):
 
     `Phase 4` of PLAN-EXEMPLAR-PIVOT. The axis is pale-versus-dark and, within dark,
     black-versus-grey — see `bleed.BLACK` for the calibration and for the one card above it.
+
+    A SHALLOW black rim is that look. A DEEP black void on every side is the inset-object defect
+    (`BlackInsetTests`) — his Hullbreaker bottoms at 0.039, Tower Winder oneshot at 0.055.
     """
 
     BLACK = (1, 1, 1)  # his Avacyn and his Hullbreaker, measured
     NEARLY = (2, 3, 2)  # his Howling Mine
+    # ~3% of the short side — his Avacyn/Hullbreaker band, under BLACK_INSET.
+    SHALLOW = max(8, int(min(CANVAS) * 0.03))
 
     def test_a_black_surround_is_not_a_mat(self):
         for colour in (self.BLACK, self.NEARLY, (0, 0, 0)):
             with self.subTest(colour=colour):
                 self.assertLess(bleed.matted_share(_matted(60, colour=colour)), bleed.MATTED)
 
-    def test_a_black_surround_is_not_cut(self):
-        """His run 11-23% deep, past MAX_DEPTH, so `trim` already left them alone. A shallow one
-        is the case that would have been cropped, and it is the one worth asserting."""
-        png = _png(_matted(20, colour=self.BLACK))
+    def test_a_shallow_black_void_is_cut(self):
+        """Same surgery as a cream mat: crop the void, scale back to canvas. Product ask is full
+        bleed to the trim — leaving black around the vines was the defect, not the feature."""
+        png = _png(_matted(self.SHALLOW, colour=self.BLACK))
         trimmed, depth = bleed.trim(png)
-        self.assertEqual(depth, 0.0)
-        self.assertEqual(trimmed, png, "the bytes came back changed — something cropped it")
+        self.assertGreater(depth, 0.0)
+        self.assertNotEqual(trimmed, png)
+        self.assertLess(
+            bleed.black_inset_depth(Image.open(io.BytesIO(trimmed)).convert("RGB")),
+            0.01,
+        )
 
-    def test_a_black_surround_is_not_reported(self):
-        """The gate that carried the entire cost of this bug: `trim` left these cards whole and
-        `matted` failed them anyway, which is a paid repaint per card."""
-        self.assertIsNone(check.matted(_matted(60, colour=self.BLACK)))
+    def test_a_shallow_black_surround_is_not_reported_after_trim(self):
+        """Offline grade of an untrimmed file can still see a shallow rim under BLACK_INSET; the
+        live path trims first. Assert the grade alone does not false-repaint Avacyn-depth rims."""
+        self.assertLess(
+            bleed.black_inset_depth(_matted(self.SHALLOW, colour=self.BLACK)),
+            bleed.BLACK_INSET,
+        )
+        self.assertIsNone(check.matted(_matted(self.SHALLOW, colour=self.BLACK)))
 
     def test_a_white_mat_still_fails(self):
         """The whole point of the module. Standing down on black must cost nothing here."""
@@ -270,6 +283,76 @@ class BlackSurroundTests(SimpleTestCase):
 
     def test_a_grey_ground_still_fails(self):
         self.assertIsNotNone(check.matted(_matted(60, colour=(50, 53, 60))))
+
+
+class BlackInsetTests(SimpleTestCase):
+    """Tower Winder oneshot 2026-08-20: card-as-object in a flat black void, full-bleed ask.
+
+    `matted_share` is 0.000 because the ring is black and BLACK stands that route down. The new
+    depth gate is what sees it. Fitted between his Hullbreaker (0.039) and the oneshot (0.055).
+    """
+
+    VOID = (0, 0, 0)
+
+    def test_a_deep_black_void_on_every_side_is_caught(self):
+        deep = max(int(min(CANVAS) * bleed.BLACK_INSET) + 4, 24)
+        image = _matted(deep, colour=self.VOID)
+        self.assertGreaterEqual(bleed.black_inset_depth(image), bleed.BLACK_INSET)
+        problem = check.matted(image)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "matted")
+        self.assertIn("black void", problem.detail)
+
+    def test_a_shallow_black_rim_is_not(self):
+        shallow = max(8, int(min(CANVAS) * 0.03))
+        self.assertIsNone(check.matted(_matted(shallow, colour=self.VOID)))
+
+    def test_the_tower_winder_oneshot_is_caught_before_trim(self):
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "packs" / "verify-oneshot-seven" / "tower-winder-blank.png"
+        )
+        if not path.is_file():
+            raise unittest.SkipTest(f"{path} is not on disk")
+        with Image.open(path) as image:
+            rgb = image.convert("RGB")
+            self.assertGreaterEqual(bleed.black_inset_depth(rgb), bleed.BLACK_INSET)
+            problem = check.matted(rgb)
+        self.assertIsNotNone(problem)
+        self.assertEqual(problem.code, "matted")
+        self.assertIn("black void", problem.detail)
+
+    def test_trim_crops_a_black_inset_under_the_ceiling(self):
+        """Mathematical full bleed: cut the void, scale back. Free — no repaint credit."""
+        deep = max(int(min(CANVAS) * bleed.BLACK_INSET) + 4, 24)
+        png = _png(_matted(deep, colour=self.VOID))
+        trimmed, depth = bleed.trim(png)
+        self.assertGreater(depth, 0.0)
+        out = Image.open(io.BytesIO(trimmed)).convert("RGB")
+        self.assertLess(bleed.black_inset_depth(out), 0.01)
+        self.assertIsNone(check.matted(out))
+
+    def test_trim_refuses_a_black_void_deeper_than_the_ceiling(self):
+        """Past MAX_DEPTH cropping would eat the frame — leave it for the grade."""
+        too_deep = int(min(CANVAS) * bleed.MAX_DEPTH) + 8
+        png = _png(_matted(too_deep, colour=self.VOID))
+        trimmed, depth = bleed.trim(png)
+        self.assertEqual(depth, 0.0)
+        self.assertEqual(trimmed, png)
+        self.assertIsNotNone(check.matted(Image.open(io.BytesIO(png)).convert("RGB")))
+
+    def test_the_tower_winder_oneshot_is_full_bleed_after_trim(self):
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "packs" / "verify-oneshot-seven" / "tower-winder-blank.png"
+        )
+        if not path.is_file():
+            raise unittest.SkipTest(f"{path} is not on disk")
+        trimmed, depth = bleed.trim(path.read_bytes())
+        self.assertGreater(depth, 0.0)
+        out = Image.open(io.BytesIO(trimmed)).convert("RGB")
+        self.assertLess(bleed.black_inset_depth(out), 0.02)
+        self.assertIsNone(check.matted(out))
 
 
 class ClientCorpusTests(SimpleTestCase):

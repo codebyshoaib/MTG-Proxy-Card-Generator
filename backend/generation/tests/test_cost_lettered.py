@@ -40,7 +40,11 @@ TREE = {**TOSKI, "name": "Tree of Tales", "type_line": "Artifact Land", "mana_co
 
 
 def _read(cost=None, **surfaces):
-    """A `panels.read_back` answer, whose cost patch is the SIGHTED one — see `Blind`."""
+    """A `panels.read_back` answer, whose cost patch is the SIGHTED one — see `Blind`.
+
+    `cost` may be a string (one run) or a list of strings (two runs of the same cost on one card —
+    Tromell 2026-08-20). The list form is how the gate sees a double cost.
+    """
     patches = [
         {"where": "title_plate", "text": surfaces.get("title", TOSKI["name"])},
         {"where": "type_strip", "text": surfaces.get("type", TOSKI["type_line"])},
@@ -48,7 +52,8 @@ def _read(cost=None, **surfaces):
         {"where": "tab", "text": surfaces.get("tab", "1/1")},
     ]
     if cost is not None:
-        patches.insert(1, {"where": "cost", "text": cost})
+        for one in cost if isinstance(cost, list) else [cost]:
+            patches.insert(1, {"where": "cost", "text": one})
     return {"title": [10, 50, 120, 950], "name": [20, 60, 110, 500],
             "type": [300, 50, 360, 950], "rules": [[500, 50, 900, 950]], "text": patches}
 
@@ -342,12 +347,14 @@ class Brief(SimpleTestCase):
         self.assertIn("never that many circles", brief)       # {11} as eleven pips
         self.assertIn("never two circles side by side", brief)  # {G/W} as two pips
 
-    def test_the_medallion_placement_is_offered_not_required(self):
-        """12 of his 19 put the cost on medallions under the name. `check` grades which symbols
-        were drawn and never where they sit, so this is an offer."""
+    def test_the_medallion_placement_is_one_alternative_not_both(self):
+        """12 of his 19 put the cost on medallions under the name. Offering that placement is
+        right; offering it as \"either\" without \"never both\" is how Tromell got two costs."""
         brief = prompts.creative_full(TOSKI, lettered=True, cost_lettered=True)
         self.assertIn("medallions on a second row", brief)
-        self.assertIn("whichever the composition wants", brief)
+        self.assertIn("EXACTLY ONE PLACE", brief)
+        self.assertIn("NEVER BOTH", brief)
+        self.assertNotIn("whichever the composition wants", brief)
 
     def test_a_land_is_told_nothing_about_a_cost_it_does_not_have(self):
         """bd mtg-m8q: a card told about a field it does not have has been told to paint it."""
@@ -361,6 +368,28 @@ class Brief(SimpleTestCase):
         )
         self.assertIn("DRAW EXACTLY 2 SYMBOL(S)", brief)
         self.assertNotIn("IS RESERVED for", brief)
+
+
+class DuplicateCost(SimpleTestCase):
+    """Tromell 2026-08-20: the cost on the plate AND hanging under it. Both correct, both visible,
+    and the gate that only compares symbol sequences against Scryfall passed the card."""
+
+    def test_two_cost_patches_are_a_wrong_cost_even_when_each_matches_scryfall(self):
+        problems = check.proofread(
+            TOSKI, _read(["{3}{G}", "{3}{G}"]), cost_lettered=True, cost_printed="{3}{G}",
+        )
+        self.assertEqual(["cost_wrong"], _codes(problems))
+        self.assertIn("EXACTLY ONE place", problems[0].detail)
+        self.assertIn("never both", problems[0].detail)
+
+    def test_one_cost_patch_still_passes(self):
+        self.assertEqual([], _codes(_drawn(TOSKI, "{3}{G}")))
+
+    def test_the_read_prompt_asks_for_each_run_as_its_own_entry(self):
+        """Without this the reader collapses both rows into one `{3}{G}` and the gate above never
+        sees the second patch."""
+        self.assertIn("EACH SEPARATE RUN as its OWN entry", panels.READ_PROMPT)
+        self.assertIn("TWO cost entries, not one", panels.READ_PROMPT)
 
 
 class Escalation(SimpleTestCase):

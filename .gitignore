@@ -17,3 +17,5 @@ docs/
 # beside them — backend/packs/*.json — IS tracked, and it plus `manage.py pack` reproduces the
 # batch, which is the point of the spec being a committed file.
 backend/packs/*/
+# Local Render CLI binary if downloaded for deploy; do not commit.
+.render-cli-bin

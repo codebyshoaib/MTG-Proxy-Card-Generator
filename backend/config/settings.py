@@ -30,7 +30,31 @@ SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-not-a-secret')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
+
+# Render sets RENDER_EXTERNAL_HOSTNAME; include it so health checks and the public URL work
+# without hand-editing ALLOWED_HOSTS on every service rename.
+_render_host = os.environ.get('RENDER_EXTERNAL_HOSTNAME', '').strip()
+if _render_host and _render_host not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(_render_host)
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+if _render_host:
+    _origin = f'https://{_render_host}'
+    if _origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_origin)
+
+# Behind Render's TLS terminator.
+if os.environ.get('RENDER'):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -49,6 +73,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'config.basic_auth.DemoBasicAuthMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -80,10 +105,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
+# DATA_DIR is where SQLite + generated media live. On a paid Render disk, point this at the
+# mount (e.g. /var/data). On free tier the filesystem is ephemeral — fine for generate→download.
+DATA_DIR = Path(os.environ['DATA_DIR']) if os.environ.get('DATA_DIR') else BASE_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': DATA_DIR / 'db.sqlite3',
     }
 }
 
@@ -124,10 +154,11 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-# Generated cards. Served by Django in DEBUG only (config/urls.py); behind a real web server in
-# production, which is a Milestone 3 concern.
+# Generated cards. The Next app proxies /media here (frontend/next.config.ts). Served by Django
+# in urls.py for the Milestone 1 demo — free-tier ephemeral disk, download is the deliverable.
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = DATA_DIR / 'media'
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 
 # Keep the raw pre-composite blank for EVERY face, not only the ones that grade unsound.
 #

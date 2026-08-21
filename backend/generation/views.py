@@ -35,6 +35,12 @@ def _catalogue(table):
 
 
 @api_view(["GET"])
+def health(_request):
+    """Render health check. Left unauthenticated by DemoBasicAuthMiddleware."""
+    return Response({"ok": True})
+
+
+@api_view(["GET"])
 def options(_request):
     return Response({
         "modes": sorted(MODES),

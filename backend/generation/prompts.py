@@ -1204,8 +1204,10 @@ def _lettering_block(face, faces_from_exemplars=False, cost_lettered=False):
         #
         # The medallion is the client's evidence, not our taste: on 12 of his 19 favorites the cost
         # is a drawn medallion or a second row under the name rather than pips at the end of the
-        # title bar. OFFERED and not required — an exemplar carries the look, and `check` grades
-        # which symbols were drawn, never where they sit.
+        # title bar. OFFERED as an ALTERNATIVE and not required — an exemplar carries the look, and
+        # `check` grades which symbols were drawn. "Either" was read as "both" on Tromell
+        # 2026-08-20 (plate-end pips AND hanging medallions of the same cost), so the wording is
+        # ONE place, never both, and `proofread` refuses two cost patches.
         *(
             [
                 "THE MANA COST IS YOURS TO DRAW, as real Magic mana symbols — one round pip per "
@@ -1213,11 +1215,15 @@ def _lettering_block(face, faces_from_exemplars=False, cost_lettered=False):
                 "black grey-black, red red, green green, and a generic number a grey circle with "
                 "the numeral in it. Each pip is an object on this card, struck or set into the "
                 "material the way the lettering is, catching this scene's light.",
-                "PUT IT NEAR THE NAME. Either is right: a row at the right-hand end of the name's "
-                "own object, or its own small medallions on a second row just under the name — "
-                "whichever the composition wants.",
-                f"DRAW EXACTLY {len(cost)} SYMBOL(S), in the order given in \"mana_cost\" above, "
-                "reading left to right. Not one more, not one fewer: count them. A number in "
+                "PUT IT IN EXACTLY ONE PLACE near the name — pick ONE and leave the other empty. "
+                "Either a row at the right-hand end of the name's own object, OR its own small "
+                "medallions on a second row just under the name. NEVER BOTH. Painting the cost on "
+                "the plate AND hanging the same pips underneath is two mana costs on one card, "
+                "and that is a printing error. Measured 2026-08-20 on Tromell: told \"either is "
+                "right\", the model took both.",
+                f"DRAW EXACTLY {len(cost)} SYMBOL(S), in that ONE place, in the order given in "
+                "\"mana_cost\" above, reading left to right. Not one more, not one fewer, and not "
+                "a second copy of the same run somewhere else: count them once. A number in "
                 "braces such as {11} is ONE circle with that number written in it, never that "
                 "many circles. A symbol written with a slash such as {G/W} or {G/P} is ONE circle "
                 "split down the middle with a half of each, never two circles side by side.",
@@ -1376,17 +1382,36 @@ def exemplar_full(
             "",
             f"THE FIRST {exemplars} ATTACHED {plural.upper()} FINISHED REFERENCE CARDS. Build "
             "this card the way they are built. Study and match:",
-            "  - HOW THE FRAME IS MADE — that a decorated border closes the card on all four "
-            "sides, how thick it is, how it turns the corners, and how it is drawn in the same "
-            "material and the same light as the picture inside it.",
-            "  - HOW EACH RAISED SURFACE IS A DEPICTED OBJECT — a carved banner, a torn scroll "
-            "with curled rods, a sagging ribbon, a cast plaque — with thickness, a lit edge and "
-            "its own shadow. Not one of them is a plain rectangle with a stroke around it.",
-            "  - HOW THE LETTERING IS DRAWN — the name in a display face that belongs to the "
-            "material, the body text in a plainer face, and each line following the object it "
-            "sits on rather than ignoring its shape.",
-            "  - HOW LITTLE OF THE CARD IS STRAIGHT LINES. Their surfaces stop short of the "
-            "card's sides and their edges are curved, torn or carved rather than ruled.",
+        ]
+        if archetype == "mural":
+            # Mural is the continuous-scene path. Naming a "decorated border" / "picture inside
+            # it" here teaches an art WINDOW — the defect Tower Winder kept shipping 2026-08-20.
+            lines += [
+                "  - HOW THE SCENE FILLS THE WHOLE CARD — one continuous painting to every edge, "
+                "with NO separate rectangular art window. The subject lives in the same space as "
+                "the lettering; the picture does not stop at a box under the name.",
+                "  - HOW EACH TEXT SURFACE IS FOUND IN THE SCENE — a ribbon, scroll, carved "
+                "stone, smoke, cloth — sitting ON the painting, with the scene continuing behind "
+                "and around it. Not a stacked title bar / art box / type bar / text box layout.",
+                "  - HOW THE LETTERING IS DRAWN into those found surfaces, following their shape.",
+                "  - HOW LITTLE OF THE CARD IS STRAIGHT RULED PLATE RIMS. Edges of text objects "
+                "are torn, curved or carved — not chrome rectangles.",
+            ]
+        else:
+            lines += [
+                "  - HOW THE FRAME IS MADE — that a decorated border closes the card on all four "
+                "sides, how thick it is, how it turns the corners, and how it is drawn in the same "
+                "material and the same light as the picture inside it.",
+                "  - HOW EACH RAISED SURFACE IS A DEPICTED OBJECT — a carved banner, a torn scroll "
+                "with curled rods, a sagging ribbon, a cast plaque — with thickness, a lit edge and "
+                "its own shadow. Not one of them is a plain rectangle with a stroke around it.",
+                "  - HOW THE LETTERING IS DRAWN — the name in a display face that belongs to the "
+                "material, the body text in a plainer face, and each line following the object it "
+                "sits on rather than ignoring its shape.",
+                "  - HOW LITTLE OF THE CARD IS STRAIGHT LINES. Their surfaces stop short of the "
+                "card's sides and their edges are curved, torn or carved rather than ruled.",
+            ]
+        lines += [
             # THE ONE THING THE EXEMPLARS MUST NOT CARRY. The `tangle` set is three blue-black
             # cards, so a card that takes their palette misstates its own colour identity — which
             # `check.colour_identity` fires on and CLAUDE.md calls a bug the client reported.
@@ -1422,22 +1447,38 @@ def exemplar_full(
     # THE FRAME. Short on purpose: the exemplars carry its construction, and this says only the
     # three things no image can settle — that it is compulsory, which archetype, and where the
     # one hard boundary is.
+    if archetype == "mural":
+        lines += [
+            "",
+            "THE CARD IS ONE CONTINUOUS SCENE — not a frame around an art window:",
+            f"For this card: {ARCHETYPE_NOTES[archetype]}.",
+            "There is NO rectangular art panel under the name. The subject and its "
+            "world fill the image; lettering sits on found surfaces in that same painting; the "
+            "scene runs behind and between those surfaces and off all four edges.",
+            "Forbidden layout: title bar + inset art box + type bar + text box stacked like a "
+            "normal Magic frame. That is an art window, and it is wrong for this card.",
+        ]
+    else:
+        lines += [
+            "",
+            "THE CARD'S FRAME, and every card has one:",
+            "A decorated border closes the card on ALL FOUR SIDES. For this card it is "
+            f"{ARCHETYPE_NOTES[archetype]}.",
+            "It is part of the painting, not laid over it: built from this scene's own material, lit "
+            "by this scene's light, with the picture continuing behind it and something from the "
+            "scene crossing in FRONT of it at a point or two.",
+        ]
+    # Edge ownership — shared. See evening 2026-08-20 rewrite (pixel language, not "FULL BLEED" jargon).
     lines += [
-        "",
-        "THE CARD'S FRAME, and every card has one:",
-        "A decorated border closes the card on ALL FOUR SIDES. For this card it is "
-        f"{ARCHETYPE_NOTES[archetype]}.",
-        "It is part of the painting, not laid over it: built from this scene's own material, lit "
-        "by this scene's light, with the picture continuing behind it and something from the "
-        "scene crossing in FRONT of it at a point or two.",
-        # MEASURED 2026-08-20: 7 of his 19 set the frame inside a flat dark surround — outer-band
-        # gradient below 1.0 on Avacyn, both Command Towers, Hullbreaker, Aurelia, Force of Will
-        # and Brainstealer — which matches his own "id be okay with black borders or black going
-        # around". So the choice is free and only the PALE margin is banned. Saying "dark is
-        # allowed" out loud also stops the model reading "frame" as a gallery mount.
-        "The frame may run right off all four edges of the image, or it may sit inside a dark "
-        "surround. Either is right. What is never right is a PALE margin: no white, cream, grey "
-        "or light border, no printed mat, and no page the card appears to be lying on.",
+        "WHERE THE IMAGE ENDS — and this is literal, pixel by pixel:",
+        "The top edge, bottom edge, left edge and right edge of THIS IMAGE are cut through the "
+        "card's own frame material or through its painted scene — vine, stone, metal, smoke, "
+        "foliage, sky — the same way the attached reference cards are cut. Zoom the top-left "
+        "corner: that pixel is frame or scene, not empty black, not empty purple, not a page.",
+        "There is NO empty band around the card. No black (or any colour) rectangle the card "
+        "sits inside. No rounded card silhouette floating on a void. No photograph of a card on "
+        "a table. The image IS the card face, edge to edge.",
+        "Also never: a PALE margin — white, cream, grey or light — or a printed mat.",
         "This image is NOT a photograph of a card. It has no rounded corners of its own, no cut "
         "edge and no drop shadow, and the image is rectangular right into each corner pixel.",
     ]

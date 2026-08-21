@@ -434,9 +434,24 @@ def proofread(face, read, only=None, cost_lettered=False, cost_printed=None):
         graded.add(where)
         # `graded` still gets "cost" either way, so a cost patch in the sighted transcription is
         # never reported as `text_extra` on this path — it is the same drawing, read twice.
+        # TWO cost patches ARE the defect, though: Tromell 2026-08-20 carried the cost on the
+        # plate AND hanging under it, and collapsing them into one string hid a printing error.
+        cost_patches = surfaces.get("cost") or []
         printed = cost_printed if where == "cost" else " ".join(surfaces.get(where) or [])
         if where == "cost" and expected:
-            disagreement = _cost_disagreement(printed, " ".join(surfaces.get("cost") or []))
+            if len([p for p in cost_patches if p.strip()]) > 1:
+                problems.append(
+                    Problem(
+                        "cost_wrong",
+                        f"the mana cost is painted {len([p for p in cost_patches if p.strip()])} "
+                        f"separate times on this card ({', '.join(_quote(p, 24) for p in cost_patches if p.strip())}). "
+                        "Draw it in EXACTLY ONE place near the name — either at the right-hand "
+                        "end of the name's plate, OR as medallions on a second row under the name, "
+                        "never both",
+                    )
+                )
+                continue
+            disagreement = _cost_disagreement(printed, " ".join(cost_patches))
             if disagreement:
                 problems.append(disagreement)
                 continue
@@ -894,29 +909,33 @@ def obstructed(blank, panels, face=None):
 
 
 def matted(card):
-    """A mat the trim could not cut, or None.
+    """A mat the trim could not cut, or an inset card on a black page, or None.
 
     `bleed.trim` removes an even margin before the card is composited, so anything still here is
     a margin it refused to touch — deeper than `bleed.MAX_DEPTH`, or on three sides rather than
     four, where cropping would slide the art off centre. Either way the client circled this exact
     defect on 2026-08-13, so it is reported rather than shipped.
 
-    A BLACK surround is not a mat and does not come through here — see `bleed.BLACK`. It used to:
-    three of the client's nineteen favorites set an illustrated frame inside a flat black surround,
-    and every one of them measured 1.000 here and would have been repainted, on his own preferred
-    look, for as long as the gate stood. His surrounds are also 11-23% deep, past
-    `bleed.MAX_DEPTH`, so `trim` was already leaving them whole — the whole cost of the mistake
-    landed on this gate, as a paid repaint per card.
+    A SHALLOW BLACK surround is not a mat and does not come through the share path — see
+    `bleed.BLACK`. Three of the client's nineteen favorites set an illustrated frame inside a flat
+    black surround, and standing the share gate down on black is what keeps them from being
+    repainted for the look he asked for.
 
-    THE GAP THAT LEAVES, stated rather than discovered later: a card painted as a rounded object on
-    a flat BLACK ground is now invisible to both gates, because `bleed._rounded_card` only knows
-    the model's white paper. Nothing measured has looked like that — the two examples on record,
-    Sol Ring and Elesh Norn, both grounded in 50-60 grey and both still fail — but it is the shape
-    of the next defect if one comes.
+    A DEEP BLACK void on all four sides is a different defect: the card painted as an object on a
+    page. `bleed.trim` crops voids shallower than `MAX_DEPTH` before this runs. What still reaches
+    here is too deep to cut — see `bleed.BLACK_INSET` / Tower Winder oneshot 2026-08-20.
     """
     from generation import bleed
 
-    share = bleed.matted_share(card.convert("RGB"))
+    rgb = card.convert("RGB")
+    inset = bleed.black_inset_depth(rgb)
+    if inset >= bleed.BLACK_INSET:
+        return Problem(
+            "matted",
+            f"{inset:.0%} of the card is a flat black void on every side — paint the frame or "
+            "the scene off all four edges; a card sitting inside a black page is not full bleed",
+        )
+    share = bleed.matted_share(rgb)
     if share < bleed.MATTED:
         return None
     return Problem(

@@ -15,9 +15,9 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, re_path
+from django.views.static import serve
 
 from generation import views
 
@@ -26,12 +26,19 @@ from generation import views
 # cannot redirect a POST without dropping its body. Accepting both ends that argument.
 urlpatterns = [
     path('admin/', admin.site.urls),
+    re_path(r'^api/health/?$', views.health),
     re_path(r'^api/options/?$', views.options),
     re_path(r'^api/generate/?$', views.generate),
     re_path(r'^api/jobs/(?P<job_id>[0-9a-f-]{36})/?$', views.job_status),
 ]
 
-# The frontend loads generated cards straight from here in development. The Next app proxies
-# /api and /media to this process (frontend/next.config.ts), so there is no CORS setup to keep
-# in sync and no second origin.
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# django.conf.urls.static.static() is a no-op when DEBUG=False. The Milestone 1 demo still needs
+# /media served from this process (Next proxies here; free-tier disk is ephemeral; download is
+# the deliverable). Milestone 3 can move this behind a real file store / CDN.
+urlpatterns += [
+    re_path(
+        r'^media/(?P<path>.*)$',
+        serve,
+        {'document_root': settings.MEDIA_ROOT},
+    ),
+]

@@ -60,10 +60,13 @@ ARCHETYPES = {
 
 SOURCES = {
     "portal": ("Command_Tower", "Force_of_Will", "Avacyn_Angel_of_Hope", "giada_of_hope"),
+    # Phase 1 set (2026-08-20). Restored same-day evening after pixel Dryad/Azusa + dark_fantasy
+    # produced black-void Tower Winders; LETTERED-DAILY / EXEMPLAR-TANGLE Toski had scene at the
+    # trim under comic_book + these refs.
     "tangle": ("Cyclonic_Rift", "Brainstealer_Dragon", "Hullbreaker_Horror"),
     "banner": ("Aurelia_the_Warleader", "Lyra_Dawnbringer"),
     "panel": ("Counterspell", "Memory_Jar", "Arcane_Signet", "Howling_Mine"),
-    "mural": ("kaalia_of_teh_vast",),
+    "mural": ("kaalia_of_teh_vast", "1-A", "5-A"),
 }
 """Which of `CLIENT-FAVORITES-2026-08-19/` seeds each archetype. Used by `prepare_exemplars`."""
 

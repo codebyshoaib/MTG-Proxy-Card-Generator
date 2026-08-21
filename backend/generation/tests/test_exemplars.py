@@ -92,17 +92,32 @@ class Brief(SimpleTestCase):
         control = prompts.creative_full(FACE, lettered=True)
         exemplar = prompts.creative_full(FACE, lettered=True, archetype="tangle", exemplars=3)
         self.assertNotEqual(control, exemplar)
-        # The prose brief's full-bleed argument is the thing that forbids the frame.
-        self.assertIn("FULL BLEED", control)
-        self.assertNotIn("FULL BLEED", exemplar)
+        # Prose borderless forbids the frame; exemplar path makes the frame compulsory.
+        self.assertIn("THE CARD IS FULL BLEED", control)
+        self.assertIn("THE CARD'S FRAME", exemplar)
+        self.assertNotIn("THE CARD'S FRAME", control)
         self.assertLess(len(exemplar), len(control))
 
-    def test_the_frame_is_compulsory_and_a_pale_margin_is_not(self):
-        """All 19 of the client's favorites close the card; 7 of them sit in a dark surround."""
+    def test_the_frame_is_compulsory_and_the_canvas_is_full_bleed(self):
+        """Spell the edge in pixels — "FULL BLEED" jargon alone did not stop Tower Winder insets.
+        """
         brief = prompts.creative_full(FACE, lettered=True, archetype="portal", exemplars=2)
         self.assertIn("ALL FOUR SIDES", brief)
+        self.assertIn("WHERE THE IMAGE ENDS", brief)
+        self.assertIn("pixel by pixel", brief)
+        self.assertIn("NOT a photograph of a card", brief)
         self.assertIn("PALE margin", brief)
+        self.assertNotIn("Either is right", brief)
+        self.assertNotIn("dark rim that IS the edge is fine", brief)
         self.assertIn("arch, gate or window", brief)
+
+    def test_mural_asks_for_continuous_scene_not_an_art_window(self):
+        brief = prompts.creative_full(FACE, lettered=True, archetype="mural", exemplars=3)
+        self.assertIn("ONE CONTINUOUS SCENE", brief)
+        self.assertIn("NO rectangular art panel", brief)
+        self.assertIn("art window", brief.lower())
+        self.assertNotIn("decorated border closes the card on ALL FOUR SIDES", brief)
+        self.assertIn("HOW THE SCENE FILLS THE WHOLE CARD", brief)
 
     def test_the_brief_counts_the_images_it_was_actually_given(self):
         """The brief points at images BY POSITION. A miscount misdescribes them, and no gate

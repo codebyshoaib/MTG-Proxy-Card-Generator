@@ -1,0 +1,23 @@
+{
+  "why": "One-shot look at what the current exemplar+cost-lettered path paints on his seven — no repaint, no unsound retry. Prompts and a sheet beside the cards so we can judge the approach before any client pack.",
+  "bead": "mtg-kyo",
+  "art_style": "dark_fantasy",
+  "art_direction": "dynamic",
+  "color_palette": "vibrant",
+  "lettered": true,
+  "cost_lettered": true,
+  "archetype": "tangle",
+  "exemplar_count": 3,
+  "use_original_art_reference": true,
+  "borderless": true,
+  "include_flavor_text": false,
+  "cards": [
+    "Tower Winder",
+    "Tromell, Seymour's Butler",
+    "Tree of Tales",
+    "Triumph of the Hordes",
+    "Thirsting Roots",
+    "Three Visits",
+    "Toski, Bearer of Secrets"
+  ]
+}

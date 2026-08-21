@@ -240,11 +240,13 @@ FIRST, transcribe. Find every separate patch of writing anywhere on this card an
   braces per symbol drawn, and if a symbol is drawn that you cannot name write {?}.
 - "where": which surface it sits on, one of:
     title_plate  the plate across the very top
-    cost         the card's MANA COST — the run of small round symbols grouped near the name,
+    cost         the card's MANA COST — a run of small round symbols grouped near the name,
                  wherever it sits: at the right end of the name's plate, on a second row beneath
-                 it, or on its own medallions. Report them in the order they read, left to right,
-                 as one entry. A mana symbol inside a sentence of body text is rules_panel and
-                 NOT this, and an ability's cost on the rules strip is rules_panel too.
+                 it, or on its own medallions. Report EACH SEPARATE RUN as its OWN entry, left to
+                 right within the run. Two rows of the same pips — one on the plate and one
+                 hanging under it — are TWO cost entries, not one. A mana symbol inside a sentence
+                 of body text is rules_panel and NOT this, and an ability's cost on the rules
+                 strip is rules_panel too.
     type_strip   the narrow horizontal strip lower down
     rules_panel  the broad pale strip holding body text
     tab          the small raised tab near the bottom-right corner
