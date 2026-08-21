@@ -14,7 +14,14 @@ export function useCatalogue() {
     let live = true;
     getCatalogue()
       .then((loaded) => live && setCatalogue(loaded))
-      .catch(() => live && setError("Could not load the style catalogue from the backend."));
+      .catch((failure: unknown) => {
+        if (!live) return;
+        const detail =
+          failure instanceof Error && failure.message
+            ? failure.message
+            : "Could not load the style catalogue from the backend.";
+        setError(detail);
+      });
     return () => {
       live = false;
     };

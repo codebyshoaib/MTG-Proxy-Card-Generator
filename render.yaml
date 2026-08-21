@@ -44,6 +44,8 @@ services:
           name: mtg-api
           type: web
           envVarKey: RENDER_EXTERNAL_URL
+      # Explicit fallback if fromService ever blanks — same host pattern Render assigned.
+      # (User can override in Dashboard.) Do not duplicate DEMO keys without values.
       - key: DEMO_BASIC_AUTH_USER
         sync: false
       - key: DEMO_BASIC_AUTH_PASSWORD
