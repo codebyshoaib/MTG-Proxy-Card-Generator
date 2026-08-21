@@ -1,0 +1,30 @@
+# Ping the API health endpoint so Render free-tier does not idle-sleep.
+# /api/health is intentionally unauthenticated (see DemoBasicAuthMiddleware).
+# Only the API is kept warm — that is what the web proxy needs for /api/options.
+# Cost note: one always-on free web service ≈ 720 of the 750 free instance-hours/month.
+name: Keep Render warm
+
+on:
+  schedule:
+    # Every 10 minutes — under the ~15 min free-tier idle window.
+    # GitHub may delay cron jobs; 10 min leaves headroom.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Wake mtg-api
+        run: |
+          set -euo pipefail
+          url="${API_HEALTH_URL:-https://mtg-api-3818.onrender.com/api/health}"
+          # Cold start can take ~60–90s; allow time before failing the job.
+          code="$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 120 "$url")"
+          body="$(cat /tmp/health.json || true)"
+          echo "status=$code body=$body"
+          test "$code" = "200"
+          echo "$body" | grep -q '"ok"'
+        env:
+          API_HEALTH_URL: ${{ vars.API_HEALTH_URL }}
