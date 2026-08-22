@@ -73,7 +73,6 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'config.basic_auth.DemoBasicAuthMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -101,9 +100,8 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# The API is gated by DemoBasicAuthMiddleware (shared demo password), not Django users.
-# DRF's default BasicAuthentication would otherwise treat Authorization: Basic demo:… as a
-# User login and return "Invalid username/password." on every generate call.
+# No user auth in Milestone 1. DRF must not use BasicAuthentication — a stray
+# Authorization: Basic header would be treated as a Django login attempt.
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [],
     'DEFAULT_PERMISSION_CLASSES': [

@@ -67,8 +67,7 @@ class GenerateTests(TestCase):
         start.assert_called_once()
 
     def test_basic_authorization_is_not_read_as_a_django_user(self):
-        """The demo gate uses Authorization: Basic. DRF must not treat it as User auth —
-        that shipped 'Invalid username/password.' on every Generate click on Render."""
+        """A stray Authorization: Basic header must not be treated as Django user auth."""
         import base64
 
         token = base64.b64encode(b"demo:not-a-real-django-user").decode()

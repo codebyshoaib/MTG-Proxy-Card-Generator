@@ -1,8 +1,6 @@
 # Milestone 1 demo on Render free tier.
 # Generated cards live on ephemeral disk for the live instance; the user deliverable is download.
 # Exemplars are not in git — set EXEMPLARS_URL to a zip of assets/exemplars/* at first boot.
-# Gate the public URL with DEMO_BASIC_AUTH_* or anyone with the link burns GEMINI_API_KEY.
-
 services:
   - type: web
     name: mtg-api
@@ -23,10 +21,6 @@ services:
         sync: false
       - key: EXEMPLARS_URL
         sync: false
-      - key: DEMO_BASIC_AUTH_USER
-        sync: false
-      - key: DEMO_BASIC_AUTH_PASSWORD
-        sync: false
       - key: DJANGO_ALLOWED_HOSTS
         value: ".onrender.com"
 
@@ -44,11 +38,5 @@ services:
           name: mtg-api
           type: web
           envVarKey: RENDER_EXTERNAL_URL
-      # Explicit fallback if fromService ever blanks — same host pattern Render assigned.
-      # (User can override in Dashboard.) Do not duplicate DEMO keys without values.
-      - key: DEMO_BASIC_AUTH_USER
-        sync: false
-      - key: DEMO_BASIC_AUTH_PASSWORD
-        sync: false
       - key: NODE_ENV
         value: production

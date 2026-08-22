@@ -1,5 +1,4 @@
 # Ping the API health endpoint so Render free-tier does not idle-sleep.
-# /api/health is intentionally unauthenticated (see DemoBasicAuthMiddleware).
 # Only the API is kept warm — that is what the web proxy needs for /api/options.
 # Cost note: one always-on free web service ≈ 720 of the 750 free instance-hours/month.
 #
